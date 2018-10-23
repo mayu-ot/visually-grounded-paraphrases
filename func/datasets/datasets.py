@@ -38,23 +38,6 @@ class BBoxDataset(chainer.dataset.DatasetMixin):
         gt_roi = np.asarray(gt_roi).astype('f')
         return im, gt_roi
 
-# def cleaning_dataframe(bbox_df, pair_df):
-#     images = pd.unique(pair_df['image'])
-#     for i in images:
-#         phrases = pd.unique(pair_df[pair_df.image == i][['original_phrase1', 'original_phrase2']].values.ravel())
-#         sub_bbox = bbox_df[bbox_df.image == i]['org_phrase']
-#         s_phrases = list(set(sub_bbox.values))
-#         for t_phr in phrases:
-#             if t_phr in s_phrases:
-#                 continue
-#             else:
-#                 dist = [edit_distance(x, t_phr) for x in s_phrases]
-#                 s_phr = s_phrases[np.argmin(dist)]
-#                 if t_phr == '" R':
-#                     s_phr = '" " R'
-#                 bbox_df.loc[(bbox_df.image == i) & (bbox_df.org_phrase == s_phr), 'org_phrase'] = t_phr
-#     return bbox_df
-
 def prepare_vis_feat_indices(bbox_df, pair_df):
     phr1 = pair_df[['image', 'original_phrase1']].drop_duplicates()
     phr1 = phr1.rename(index=str, columns={'original_phrase1': 'phrase'})

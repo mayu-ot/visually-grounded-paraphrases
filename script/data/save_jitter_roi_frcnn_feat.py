@@ -1,12 +1,9 @@
 import numpy as np
 import chainer
 from chainer.iterators import SerialIterator
-import pandas as pd
-import imageio
-from chainer.dataset.convert import to_device
 import sys
 sys.path.append('./')
-from func.datasets.converters import jitter_bbox, cvrt_bbox
+from func.datasets.converters import cvrt_bbox
 from func.datasets.datasets import BBoxDataset
 from func.nets.faster_rcnn import FasterRCNNExtractor
 
