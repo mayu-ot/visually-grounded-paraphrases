@@ -3,7 +3,7 @@ import chainer
 import sys
 sys.path.append('./')
 from func.datasets.converters import cvrt_frcnn_input
-from func.datasets.datasets import DDPNBBoxDataset, PLCLCBBoxDataset
+from func.datasets.datasets import DDPNBBoxDataset, PLCLCBBoxDataset, BBoxDataset
 from func.nets.faster_rcnn import FasterRCNNExtractor
 import progressbar
 
@@ -40,6 +40,10 @@ if __name__ == '__main__':
         bbox_data = DDPNBBoxDataset(args.split)
     elif args.method == 'plclc':
         bbox_data = PLCLCBBoxDataset(args.split)
+    elif args.method == 'gtroi':
+        bbox_data = BBoxDataset(args.split)
+    else:
+        raise RuntimeError('invalid method name: %s'%args.method)
         
     feat = extract_frcnn_feat(bbox_data, args.split, args.device)
     np.save('data/region_feat/%s_roi-frcnn/%s'%(args.method, args.split), feat)
