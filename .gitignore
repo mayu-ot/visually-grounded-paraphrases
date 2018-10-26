@@ -1,0 +1,12 @@
+data/
+figures/
+bo_out/
+best_models/
+checkpoint/
+hp_search/
+.ipynb_checkpoints/
+*.dot
+*.jpg
+*.pdf
+*.html
+*.pyc

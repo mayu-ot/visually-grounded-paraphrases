@@ -11,11 +11,10 @@ class FasterRCNNExtractor(FasterRCNNVGG16):
     def extract_head(self, x, rois, roi_indices):
         head = self.head
         roi_indices = roi_indices.astype(np.float32)
-        indices_and_rois = self.xp.concatenate(
-            (roi_indices[:, None], rois), axis=1)
-        pool = _roi_pooling_2d_yx(
-            x, indices_and_rois, head.roi_size, head.roi_size,
-            head.spatial_scale)
+        indices_and_rois = self.xp.concatenate((roi_indices[:, None], rois),
+                                               axis=1)
+        pool = _roi_pooling_2d_yx(x, indices_and_rois, head.roi_size,
+                                  head.roi_size, head.spatial_scale)
 
         fc6 = F.relu(head.fc6(pool))
         fc7 = F.relu(head.fc7(fc6))

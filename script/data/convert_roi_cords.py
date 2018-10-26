@@ -1,4 +1,3 @@
-
 import os
 import h5py
 import numpy as np
@@ -14,4 +13,5 @@ for split in ['train', 'test', 'val']:
 
     with h5py.File(out_file, 'w') as hf:
         for fname in bar(FILES):
-            hf.create_dataset(fname, data=np.loadtxt(in_dir+fname).astype(np.uint32))
+            hf.create_dataset(
+                fname, data=np.loadtxt(in_dir + fname).astype(np.uint32))

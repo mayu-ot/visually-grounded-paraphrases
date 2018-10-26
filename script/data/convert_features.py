@@ -1,4 +1,3 @@
-
 import os
 import h5py
 import numpy as np
@@ -14,5 +13,5 @@ bar = progressbar.ProgressBar()
 
 with h5py.File(out_file, 'w') as hf:
     for fname in bar(FILES):
-        x = np.loadtxt(in_dir+fname).astype(np.float32)
+        x = np.loadtxt(in_dir + fname).astype(np.float32)
         hf.create_dataset(fname, data=x)

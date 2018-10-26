@@ -10,22 +10,30 @@ import numpy as np
 import gzip
 import pandas as pd
 
+
 def add_bbox(bb, ax, h, w, caption=None):
     y_min, x_min, y_max, x_max = bb
-    
+
     xy = (x_min, y_min)
     width = x_max - x_min
     height = y_max - y_min
-    ax.add_patch(plt.Rectangle(
-        xy, width, height, fill=False, edgecolor='yellow', linewidth=2))
+    ax.add_patch(
+        plt.Rectangle(
+            xy, width, height, fill=False, edgecolor='yellow', linewidth=2))
 
     if caption is None:
         return
 
-    ax.text(bb[0], bb[1],
-            caption,
-            style='italic',
-            bbox={'facecolor': 'white', 'alpha': 0.7, 'pad': 2})
+    ax.text(
+        bb[0],
+        bb[1],
+        caption,
+        style='italic',
+        bbox={
+            'facecolor': 'white',
+            'alpha': 0.7,
+            'pad': 2
+        })
 
 
 def load_bbox(xml_f):
@@ -70,6 +78,7 @@ def load_region(img, bbox):
     img = plt.imread(img)
     return img[y_min:y_max, x_min:x_max]
 
+
 def load_pt(pt):
     pt_mul_all_dic = {}
     pt_prob_str_dic = {}
@@ -88,15 +97,17 @@ def load_pt(pt):
     f.close()
     return pt_mul_all_dic, pt_prob_str_dic
 
+
 def judge_entity_pair(entity_1, entity_2, pt_dic):
     flag = False
-    if(entity_1 in pt_dic):
-        if(entity_2 in pt_dic[entity_1]):
+    if (entity_1 in pt_dic):
+        if (entity_2 in pt_dic[entity_1]):
             # print(entity_1, '#', entity_2, '#', pt_dic[entity_1][entity_2])
             flag = True
     # if(flag == False):
     #     print(entity_1, '#', entity_2, '#')
     return flag
+
 
 def load_entity_per_sen(txt_f):
     entity_dic = {}
@@ -114,7 +125,7 @@ def load_entity_per_sen(txt_f):
                 r_id = m.group(0)
                 entity = s[s.find(' ') + 1:]
                 # entity_dic[line_num][r_id] = entity.lower()
-                if(line_num in entity_dic):
+                if (line_num in entity_dic):
                     if (r_id in entity_dic[line_num]):
                         entity_ = entity_dic[line_num][r_id]
                         entity_[entity.lower()] = 1
@@ -130,6 +141,7 @@ def load_entity_per_sen(txt_f):
             line_num += 1
     return entity_dic
 
+
 def load_convert(csv):
     data = pd.read_csv(csv)
     convert_list = {}
@@ -137,9 +149,12 @@ def load_convert(csv):
         phr1_pair = item.phrase1.split('/')
         phr2_pair = item.phrase2.split('/')
         image_id = item.image
-        convert_list.setdefault(str(image_id), {})[phr1_pair[0].lower()] = phr1_pair[1]
-        convert_list.setdefault(str(image_id), {})[phr2_pair[0].lower()] = phr2_pair[1]
+        convert_list.setdefault(str(image_id),
+                                {})[phr1_pair[0].lower()] = phr1_pair[1]
+        convert_list.setdefault(str(image_id),
+                                {})[phr2_pair[0].lower()] = phr2_pair[1]
     return convert_list
+
 
 def show_samples(flickr30k_entities_dir, flickr30k_images_dir):
     # annotation file
@@ -150,8 +165,8 @@ def show_samples(flickr30k_entities_dir, flickr30k_images_dir):
 
     # load bbox and entities
     bbox_name = load_bbox(flickr30k_entities_dir + '/Annotations/' + xml_f)
-    phrase = load_entity(flickr30k_entities_dir +
-                         '/Sentences/' + xml_f[:-4] + '.txt')
+    phrase = load_entity(flickr30k_entities_dir + '/Sentences/' + xml_f[:-4] +
+                         '.txt')
 
     # display image with bbox2entities
     im = plt.imread(flickr30k_images_dir + '/' + xml_f[:-4] + '.jpg')
@@ -170,16 +185,18 @@ def show_samples(flickr30k_entities_dir, flickr30k_images_dir):
 
 
 def cmdline(arguments=None):
-    parser = argparse.ArgumentParser(description="Show Flickr30k entities examples.",
-                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("--flickr30k_entities_dir",
-                        help="set Flickr30k entities directory")
-    parser.add_argument("--flickr30k_images_dir",
-                        help="set Flickr30k images directory")
+    parser = argparse.ArgumentParser(
+        description="Show Flickr30k entities examples.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument(
+        "--flickr30k_entities_dir", help="set Flickr30k entities directory")
+    parser.add_argument(
+        "--flickr30k_images_dir", help="set Flickr30k images directory")
     args = parser.parse_args(args=arguments)
     for _ in range(1):
         show_samples(args.flickr30k_entities_dir, args.flickr30k_images_dir)
     plt.close()
+
 
 if __name__ == '__main__':
     cmdline()
