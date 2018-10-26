@@ -1,6 +1,7 @@
 Chainer implementation of Visually Grounded Paraphrase (VGP) identification using phrase localization techniques.
 
 # Data
+Downlaod the Flickr30K dataset and copy `flickr30k-images/` under `data/` directory.
 
 # Training Model
 For training a model using the DDPN phrase locaization method, run
