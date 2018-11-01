@@ -1,265 +1,23 @@
 import chainer
-import chainer.links as L
-import chainer.functions as F
 from chainer import training
 from chainer.training import extensions
 import numpy as np
 import os
 from chainer.iterators import SerialIterator, MultiprocessIterator
-from chainer import function
-from chainer import cuda
-from chainer.dataset.convert import concat_examples
-import pandas as pd
-from collections import defaultdict
-from chainer import dataset
-from imageio import imread
-from chainer import initializers
-from chainer.dataset import iterator
-from chainer.dataset.convert import to_device
-import _pickle as pickle
 import json
 from sklearn.metrics import precision_score, recall_score, f1_score, precision_recall_curve
 from datetime import datetime as dt
-import tables
-from chainercv.utils import bbox_iou
-import random
-from functools import reduce
-from chainer import reporter
-import cupy
-import shutil
 import sys
 sys.path.append('./')
 from func.datasets.datasets import GTJitterDataset, PLCLCDataset, DDPNDataset
 from func.datasets.converters import cvrt_pre_comp_feat
+from func.nets.gate_net import Switching_iParaphraseNet, ImageOnlyNet, PhraseOnlyNet
 
 chainer.config.multiproc = True  # single proc is faster
-
-import chainer
-import chainer.functions as F
-from chainer.iterators import SerialIterator
-import pandas as pd
-import tables
-import numpy as np
-import imageio
-import os
-
-
-def binary_classification_summary(y, t):
-    xp = cuda.get_array_module(y)
-    y = y.data
-
-    y = y.ravel()
-    true = t.ravel()
-    pred = (y > 0)
-    support = xp.sum(true)
-
-    gtp_mask = xp.where(true)
-    relevant = xp.sum(pred)
-    tp = pred[gtp_mask].sum()
-
-    if (support == 0) or (relevant == 0) or (tp == 0):
-        return xp.array(0.), xp.array(0.), xp.array(0.)
-
-    prec = tp * 1. / relevant
-    recall = tp * 1. / support
-    f1 = 2. * (prec * recall) / (prec + recall)
-
-    return prec, recall, f1
-
-
-class PhraseProjectionNet(chainer.Chain):
-    def __init__(self):
-        super(PhraseProjectionNet, self).__init__()
-        with self.init_scope():
-            self.setup_layers()
-
-    def setup_layers(self):
-        h_size = 1000
-        # fusenet for phrase and region features
-        self.fuse_p = L.Linear(
-            None, h_size, initialW=initializers.HeNormal(), nobias=True)
-        self.bn_2 = L.BatchNormalization(h_size)
-        self.fuse_2 = L.Linear(
-            None, 300, initialW=initializers.HeNormal(), nobias=True)
-        self.bn_3 = L.BatchNormalization(300)
-
-    def __call__(self, Xp):
-        h = F.relu(self.bn_2(self.fuse_p(Xp)))
-        h = F.relu(self.bn_3(self.fuse_2(h)))
-        return h
-
-
-class ImageProjectionNet(chainer.Chain):
-    def __init__(self):
-        super(ImageProjectionNet, self).__init__()
-        with self.init_scope():
-            self.setup_layers()
-
-    def setup_layers(self):
-        h_size = 1000
-        # fusenet for phrase and region features
-        self.fuse_r1 = L.Linear(
-            None, h_size, initialW=initializers.HeNormal(), nobias=True)
-        self.bn_1 = L.BatchNormalization(h_size)
-        self.fuse_r2 = L.Linear(
-            None, h_size, initialW=initializers.HeNormal(), nobias=True)
-        self.bn_2 = L.BatchNormalization(h_size)
-        self.fuse_2 = L.Linear(
-            None, 300, initialW=initializers.HeNormal(), nobias=True)
-        self.bn_3 = L.BatchNormalization(300)
-
-    def __call__(self, Xvis):
-        Xvis = F.relu(self.bn_1(self.fuse_r1(Xvis)))
-        h = F.relu(self.bn_2(self.fuse_r2(Xvis)))
-        h = F.relu(self.bn_3(self.fuse_2(h)))
-        return h
-
-
-class FusionNet(chainer.Chain):
-    def __init__(self):
-        super(FusionNet, self).__init__()
-        with self.init_scope():
-            self.setup_layers()
-
-    def setup_layers(self):
-        h_size = 1000
-        # fusenet for phrase and region features
-        self.fuse_r1 = L.Linear(
-            None, h_size, initialW=initializers.HeNormal(), nobias=True)
-        self.bn_1 = L.BatchNormalization(h_size)
-        self.fuse_r2 = L.Linear(
-            None, h_size, initialW=initializers.HeNormal(), nobias=True)
-        self.fuse_p = L.Linear(
-            None, h_size, initialW=initializers.HeNormal(), nobias=True)
-        self.bn_2 = L.BatchNormalization(h_size)
-        self.fuse_2 = L.Linear(
-            None, 300, initialW=initializers.HeNormal(), nobias=True)
-        self.bn_3 = L.BatchNormalization(300)
-
-    def __call__(self, Xvis, Xp):
-        Xvis = F.relu(self.bn_1(self.fuse_r1(Xvis)))
-        h = F.relu(self.bn_2(self.fuse_r2(Xvis) + self.fuse_p(Xp)))
-        h = F.relu(self.bn_3(self.fuse_2(h)))
-        return h
-
-
-class ClassifierNet(chainer.Chain):
-    def __init__(self, dr_ratio=.4):
-        self._dr_ratio = dr_ratio
-        super(ClassifierNet, self).__init__()
-        with self.init_scope():
-            self.mlp_1 = L.Linear(
-                None, 128, initialW=initializers.HeNormal(), nobias=True)
-            self.mlp_2 = L.Linear(
-                None, 128, initialW=initializers.HeNormal(), nobias=True)
-            self.bn_4 = L.BatchNormalization(128)
-            self.cls = L.Linear(None, 1, initialW=initializers.LeCunNormal())
-
-    def __call__(self, X1, X2, L):
-        # paraphrase classification
-
-        h = F.relu(self.bn_4(self.mlp_1(X1) + self.mlp_2(X2)))
-        h = self.cls(F.dropout(h, self._dr_ratio))
-        h = F.flatten(h)
-
-        if chainer.config.train == False:
-            self.y = F.sigmoid(h)
-            self.t = L
-
-        loss = F.sigmoid_cross_entropy(h, L)
-
-        precision, recall, fbeta = binary_classification_summary(h, L)
-        reporter.report({
-            'loss': loss,
-            'precision': precision,
-            'recall': recall,
-            'f1': fbeta
-        }, self)
-        return loss
-
-
-class iParaphraseNet(chainer.Chain):
-    def __init__(self):
-        super(iParaphraseNet, self).__init__()
-        with self.init_scope():
-            self.fusion_net = FusionNet()
-            self.classifier = ClassifierNet()
-
-    def predict(self, phr_1, phr_2, xvis_1, xvis_2, l):
-        _ = self(phr_1, phr_2, xvis_1, xvis_2, l)
-        y = self.classifier.y
-        return y
-
-    def __call__(self, phr_1, phr_2, xvis_1, xvis_2, l):
-
-        h1 = self.fusion_net(xvis_1, phr_1)
-        h2 = self.fusion_net(xvis_2, phr_2)
-
-        loss = self.classifier(h1, h2, l)
-        return loss
-
-
-class iOnlyNet(chainer.Chain):
-    def __init__(self):
-        super(iOnlyNet, self).__init__()
-        with self.init_scope():
-            self.proj_net = ImageProjectionNet()
-            self.classifier = ClassifierNet()
-
-    def predict(self, phr_1, phr_2, xvis_1, xvis_2, l):
-        _ = self(phr_1, phr_2, xvis_1, xvis_2, l)
-        y = self.classifier.y
-        return y
-
-    def __call__(self, phr_1, phr_2, xvis_1, xvis_2, l):
-        h1 = self.proj_net(xvis_1)
-        h2 = self.proj_net(xvis_2)
-        loss = self.classifier(h1, h2, l)
-
-        return loss
-
-
-class pOnlyNet(chainer.Chain):
-    def __init__(self):
-        super(pOnlyNet, self).__init__()
-        with self.init_scope():
-            self.proj_net = PhraseProjectionNet()
-            self.classifier = ClassifierNet()
-
-    def predict(self, phr_1, phr_2, xvis_1, xvis_2, l):
-        _ = self(phr_1, phr_2, xvis_1, xvis_2, l)
-        y = self.classifier.y
-        return y
-
-    def __call__(self, phr_1, phr_2, xvis_1, xvis_2, l):
-
-        h1 = self.proj_net(phr_1)
-        h2 = self.proj_net(phr_2)
-        loss = self.classifier(h1, h2, l)
-
-        return loss
-
-
-def postprocess(res):
-    keys = list(res.keys())
-
-    for k in keys:
-        if k == 'main/classifier_net/loss':
-            res['main/cls_loss'] = res[k]
-        elif k == 'main/classifier_net/f1':
-            res['main/f1'] = res[k]
-        elif k == 'validation/main/classifier_net/f1':
-            res['validation/main/f1'] = res[k]
-        elif k == 'validation/main/classifier_net/loss':
-            res['validation/main/cls_loss'] = res[k]
-        else:
-            pass
-
 
 def train(san_check=False,
           epoch=5,
           lr=0.001,
-          dr_ratio=.4,
           b_size=1000,
           device=0,
           w_decay=None,
@@ -275,19 +33,12 @@ def train(san_check=False,
     print('output to', saveto)
     print('setup dataset...')
 
-    if model_type in ['vis+lng+gtroi', 'vis+gtroi']:
-        train = GTJitterDataset('train', san_check=san_check)
-        val = GTJitterDataset('val', san_check=san_check)
-    elif model_type in ['vis+lng+plclcroi', 'vis+plclcroi']:
+    if model_type in ['vis+lng+plclcroi', 'vis+plclcroi']:
         train = PLCLCDataset('train', san_check=san_check)
         val = PLCLCDataset('val', san_check=san_check)
-    elif model_type in ['vis+lng+ddpnroi', 'vis+ddpnroi']:
+    else:
         train = DDPNDataset('train', san_check=san_check) 
         val = DDPNDataset('val', san_check=san_check)
-    else:
-        train = GTJitterDataset('train', san_check=san_check)
-        val = PLCLCDataset(
-            'val', san_check=san_check)  # validate on plclc bbox
 
     if chainer.config.multiproc:
         train_iter = MultiprocessIterator(train, b_size, n_processes=2)
@@ -302,11 +53,11 @@ def train(san_check=False,
     if model_type in [
             'vis+lng', 'vis+lng+gtroi', 'vis+lng+plclcroi', 'vis+lng+ddpnroi'
     ]:
-        model = iParaphraseNet()
+        model = Switching_iParaphraseNet()
     elif model_type in ['vis', 'vis+gtroi', 'vis+plclcroi', 'vis+ddpnroi']:
-        model = iOnlyNet()
+        model = ImageOnlyNet()
     elif model_type == 'lng':
-        model = pOnlyNet()
+        model = PhraseOnlyNet()
     else:
         raise RuntimeError('invalid model_type: %s' % model_type)
 
@@ -345,20 +96,20 @@ def train(san_check=False,
         trainer.extend(extensions.snapshot(), trigger=(1, 'epoch'))
 
         best_val_trigger = training.triggers.MaxValueTrigger(
-            'validation/main/classifier/f1', trigger=val_interval)
+            'validation/main/f1', trigger=val_interval)
         trainer.extend(
             extensions.snapshot_object(model, 'model'),
             trigger=best_val_trigger)
 
     # logging extensions
     trainer.extend(
-        extensions.LogReport(trigger=log_interval, postprocess=postprocess))
+        extensions.LogReport(trigger=log_interval))
     trainer.extend(extensions.observe_lr(), trigger=log_interval)
 
     trainer.extend(
         extensions.PrintReport([
-            'epoch', 'iteration', 'main/classifier/loss',
-            'main/validation/classifier/loss'
+            'epoch', 'iteration', 'main/loss', 'main/f1',
+            'main/validation/loss', 'validation/main/f1'
         ]),
         trigger=log_interval)
     trainer.extend(extensions.ProgressBar(update_interval=log_interval[0]))
@@ -383,11 +134,11 @@ def get_prediction(model_dir, split, device=None):
     if model_type in [
             'vis+lng', 'vis+lng+gtroi', 'vis+lng+plclcroi', 'vis+lng+ddpnroi'
     ]:
-        model = iParaphraseNet()
+        model = Switching_iParaphraseNet()
     elif model_type in ['vis', 'vis+gtroi', 'vis+plclcroi', 'vis+ddpnroi']:
-        model = iOnlyNet()
+        model = ImageOnlyNet()
     elif model_type == 'lng':
-        model = pOnlyNet()
+        model = PhraseOnlyNet()
     else:
         raise RuntimeError('invalid model_type: %s' % model_type)
 
@@ -489,12 +240,6 @@ def main():
         default=None,
         help='weight decay <float>')
     parser.add_argument(
-        '--dr_ratio',
-        '-dr',
-        type=float,
-        default=0.0,
-        help='dropout ratio <float>')
-    parser.add_argument(
         '--settings', type=str, default=None, help='path to arg file')
     parser.add_argument('--model_type', '-mt', default='vis+lng')
     parser.add_argument(
@@ -528,7 +273,6 @@ def main():
             san_check=args_dic['san_check'],
             epoch=args_dic['epoch'],
             lr=args_dic['lr'],
-            dr_ratio=args_dic['dr_ratio'],
             b_size=args_dic['b_size'],
             device=args_dic['device'],
             w_decay=args_dic['w_decay'],

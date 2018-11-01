@@ -5,7 +5,7 @@ import GPyOpt
 import os
 import sys
 sys.path.append('./script/training')
-from train_pre_comp_feat import train
+from train import train
 
 COUNT = 0
 
@@ -14,7 +14,7 @@ def wrapper(params, model_type, device):
     global COUNT
     COUNT += 1
 
-    lr, dr_ratio, w_decay = params[0]
+    lr, w_decay = params[0]
     lr = 10**lr
     w_decay = 10**w_decay
 
@@ -26,7 +26,6 @@ def wrapper(params, model_type, device):
     best_val = train(
         model_type=model_type,
         lr=lr,
-        dr_ratio=dr_ratio,
         w_decay=w_decay,
         epoch=5,
         device=device,
@@ -56,12 +55,6 @@ if __name__ == '__main__':
             'name': 'lr',
             'type': 'continuous',
             'domain': (-5, -1),
-            'dimensionality': 1
-        },
-        {
-            'name': 'dr_ratio',
-            'type': 'continuous',
-            'domain': (0., .9),
             'dimensionality': 1
         },
         {
