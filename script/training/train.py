@@ -1,6 +1,7 @@
 import chainer
 from chainer import training
 from chainer.training import extensions
+from chainer import function
 import numpy as np
 import os
 from chainer.iterators import SerialIterator, MultiprocessIterator
