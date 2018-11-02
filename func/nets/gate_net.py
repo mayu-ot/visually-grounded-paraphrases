@@ -60,19 +60,6 @@ class ImgNet(chainer.Chain):
         
         h = F.relu(self.bn_1(self.l_1(h0) + self.l_1(h1)))
         return h
-    
-class GateNet(chainer.Chain):
-    def __init__(self, out_size):
-        super(GateNet, self).__init__()
-        w = initializers.HeNormal()
-        with self.init_scope():
-            self.g_phr = L.Linear(None, out_size, initialW=w)
-            self.g_img = L.Linear(None, out_size, initialW=w)
-            
-    def __call__(self, x_p, x_v):
-        g_l = F.sigmoid(self.g_phr(x_p))
-        g_v = F.sigmoid(self.g_img(x_v))
-        return g_l, g_v
 
 class SingleModalClassifierNet(chainer.Chain):
     def __init__(self, out_size):
@@ -87,46 +74,6 @@ class SingleModalClassifierNet(chainer.Chain):
 
     def __call__(self, x):
         h = F.tanh(self.bn_0(self.l_0(x)))
-        h = F.relu(self.bn_1(self.l_1(h)))
-        h = self.cls(h)
-        h = F.flatten(h)
-        return h
-    
-class MultiModalClassifierNet(chainer.Chain):
-    def __init__(self, out_size):
-        super(MultiModalClassifierNet, self).__init__()
-        w = initializers.HeNormal()
-        with self.init_scope():
-            self.l_phr = L.Linear(None, out_size, initialW=w)
-            self.l_img = L.Linear(None, out_size, initialW=w)
-            
-            self.l_1 = L.Linear(None, out_size, initialW=w, nobias=True)
-            self.bn_l0 = L.BatchNormalization(out_size)
-            self.bn_v0 = L.BatchNormalization(out_size)
-            self.bn_1 = L.BatchNormalization(out_size)
-            
-            self.cls = L.Linear(None, 1, initialW=w)
-
-    def __call__(self, x_p, x_v):
-        h = F.tanh(self.bn_l0(self.l_phr(x_p))) + F.tanh(self.bn_v0(self.l_img(x_v)))
-        h = F.relu(self.bn_1(self.l_1(h)))
-        h = self.cls(h)
-        h = F.flatten(h)
-        return h
-    
-class GatedClassifierNet(MultiModalClassifierNet):
-    def __init__(self, out_size):
-        super(GatedClassifierNet, self).__init__(out_size)
-        w = initializers.HeNormal()
-        with self.init_scope():
-            self.gate_net = GateNet(out_size)
-
-    def __call__(self, x_p, x_v):
-        # gates
-        g_l, g_v = self.gate_net(x_p, x_v)
-        h_l = F.tanh(self.bn_l0(self.l_phr(x_p))) # added batchnormalization
-        h_v = F.tanh(self.bn_v0(self.l_img(x_v))) # added batchnormalization
-        h = g_l * h_l + g_v * h_v
         h = F.relu(self.bn_1(self.l_1(h)))
         h = self.cls(h)
         h = F.flatten(h)
@@ -195,14 +142,84 @@ class ImageOnlyNet(chainer.Chain):
         }, self)
         
         return loss
+
+class MultiModalClassifierNet(chainer.Chain):
+    def __init__(self, out_size):
+        super(MultiModalClassifierNet, self).__init__()
+        w = initializers.HeNormal()
+        with self.init_scope():
+            self.l_phr = L.Linear(None, out_size, initialW=w)
+            self.l_img = L.Linear(None, out_size, initialW=w)
+            
+            self.l_1 = L.Linear(None, out_size, initialW=w, nobias=True)
+            self.bn_l0 = L.BatchNormalization(out_size)
+            self.bn_v0 = L.BatchNormalization(out_size)
+            self.bn_1 = L.BatchNormalization(out_size)
+            
+            self.cls = L.Linear(None, 1, initialW=w)
+
+    def __call__(self, x_p, x_v):
+        h_l = F.tanh(self.bn_l0(self.l_phr(x_p)))
+        h_v = F.tanh(self.bn_v0(self.l_img(x_v)))
+        h = h_l * .5 + h_v * .5
+        h = F.relu(self.bn_1(self.l_1(h)))
+        h = self.cls(h)
+        h = F.flatten(h)
+        return h
+
+class GateNet(chainer.Chain):
+    def __init__(self, out_size):
+        super(GateNet, self).__init__()
+        w = initializers.HeNormal()
+        with self.init_scope():
+            self.g_phr = L.Linear(None, out_size, initialW=w)
+            self.g_img = L.Linear(None, out_size, initialW=w)
+            
+    def __call__(self, *args):
+        x, _ = args # use only the first modality
+        g_l = F.sigmoid(self.g_phr(x))
+        g_v = F.sigmoid(self.g_img(x))
+        return g_l, g_v
+    
+class MultiModalGateNet(GateNet):
+    def __call__(self, *args):
+        x = F.concat(args, axis=1) # use all modality
+        g_l = F.sigmoid(self.g_phr(x))
+        g_v = F.sigmoid(self.g_img(x))
+        return g_l, g_v
+    
+class GatedClassifierNet(MultiModalClassifierNet):
+    def __init__(self, out_size, gate_net=None):
+        super(GatedClassifierNet, self).__init__(out_size)
+        w = initializers.HeNormal()
+        with self.init_scope():
+            self.gate_net = gate_net
+
+    def __call__(self, x_p, x_v):
+        g_l, g_v = self.gate_net(x_p, x_v)
+        h_l = F.tanh(self.bn_l0(self.l_phr(x_p))) # added batchnormalization
+        h_v = F.tanh(self.bn_v0(self.l_img(x_v))) # added batchnormalization
+        h = g_l * h_l + g_v * h_v
+        h = F.relu(self.bn_1(self.l_1(h)))
+        h = self.cls(h)
+        h = F.flatten(h)
+        return h
     
 class Switching_iParaphraseNet(chainer.Chain):
-    def __init__(self):
+    def __init__(self, mult_modal_gate=False):
         super(Switching_iParaphraseNet, self).__init__()
+        self.setup_layers(mult_modal_gate)
+        
+    def setup_layers(self, mult_modal_gate):
         with self.init_scope():
             self.phrase_net = PhraseNet(1000)
             self.vision_net = ImgNet(1000)
-            self.classifier = GatedClassifierNet(300)
+            if mult_modal_gate:
+                gate_net = MultiModalGateNet(300)
+            else:
+                gate_net = GateNet(300)
+                
+            self.classifier = GatedClassifierNet(300, gate_net)
 
     def predict(self, phr_1, phr_2, xvis_1, xvis_2, l):
         _ = self(phr_1, phr_2, xvis_1, xvis_2, l)
@@ -230,6 +247,16 @@ class Switching_iParaphraseNet(chainer.Chain):
         }, self)
         
         return loss
+
+class NaiveFuse_iParaphraseNet(Switching_iParaphraseNet):
+    def __init__(self):
+        super(NaiveFuse_iParaphraseNet, self).__init__()
+        
+    def setup_layers(self):
+        with self.init_scope():
+            self.phrase_net = PhraseNet(1000)
+            self.vision_net = ImgNet(1000)
+            self.classifier = MultiModalClassifierNet(300)
     
     
 class BaseNet(chainer.Chain):
@@ -250,25 +277,6 @@ class BaseNet(chainer.Chain):
         h = F.relu(self.bn_1(self.l_1(h0) + self.l_1(h1)))
         h = self.cls(h)
         return h
-
-class MultiModalGateNet(chainer.Chain):
-    def __init__(self, h_size):
-        super(MultiModalGateNet, self).__init__()
-        w = initializers.HeNormal()
-        with self.init_scope():
-            self.l_l0 = L.Linear(None, h_size, initialW=w, nobias=True)
-            self.l_v0 = L.Linear(None, h_size, initialW=w, nobias=True)
-            self.l= L.Linear(h_size, 1, initialW=w)
-            
-            self.bn_l = L.BatchNormalization(h_size)
-            self.bn_v = L.BatchNormalization(h_size)
-    
-    def __call__(self, x_p1, x_p2, x_i1, x_i2):
-        hl = F.relu(self.bn_l(self.l_l0(x_p1)+self.l_l0(x_p2)))
-        hv = F.relu(self.bn_v(self.l_v0(x_i1)+self.l_v0(x_i2)))
-        w = F.sigmoid(self.l(hl) + self.l(hv))
-        return w
-        
             
 class LateSwitching_iParaphraseNet(chainer.Chain):
     def __init__(self):

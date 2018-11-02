@@ -12,7 +12,7 @@ import sys
 sys.path.append('./')
 from func.datasets.datasets import GTJitterDataset, PLCLCDataset, DDPNDataset
 from func.datasets.converters import cvrt_pre_comp_feat
-from func.nets.gate_net import Switching_iParaphraseNet, ImageOnlyNet, PhraseOnlyNet
+from func.nets.gate_net import Switching_iParaphraseNet, ImageOnlyNet, PhraseOnlyNet, NaiveFuse_iParaphraseNet
 
 chainer.config.multiproc = True  # single proc is faster
 
@@ -34,7 +34,7 @@ def train(san_check=False,
     print('output to', saveto)
     print('setup dataset...')
 
-    if model_type in ['vis+lng+plclcroi', 'vis+plclcroi']:
+    if model_type in ['vis+lng+plclc', 'vis+plclc']:
         train = PLCLCDataset('train', san_check=san_check)
         val = PLCLCDataset('val', san_check=san_check)
     else:
@@ -52,9 +52,12 @@ def train(san_check=False,
     print('setup a model: %s' % model_type)
 
     if model_type in [
-            'vis+lng', 'vis+lng+gtroi', 'vis+lng+plclcroi', 'vis+lng+ddpnroi'
-    ]:
+            'vis+lng', 'vis+lng+gtroi', 'vis+lng+plclc', 'vis+lng+ddpn']:
         model = Switching_iParaphraseNet()
+    elif model_type in ['vis+lng+plclc+mg', 'vis+lng+ddpn+mg']:
+        model = Switching_iParaphraseNet(mult_modal_gate=True)
+    elif model_type in ['wo_gate+vis+lng+plclcroi', 'wo_gate+vis+lng+ddpnroi']:
+        model = NaiveFuse_iParaphraseNet()
     elif model_type in ['vis', 'vis+gtroi', 'vis+plclcroi', 'vis+ddpnroi']:
         model = ImageOnlyNet()
     elif model_type == 'lng':
@@ -85,13 +88,13 @@ def train(san_check=False,
         extensions.Evaluator(
             val_iter, model, converter=cvrt_pre_comp_feat, device=device),
         trigger=val_interval)
-
+    
     if not san_check:
         trainer.extend(
             extensions.ExponentialShift('alpha', 0.5), trigger=(1, 'epoch'))
 
     # # Comment out to enable visualization of a computational graph.
-    # trainer.extend(extensions.dump_graph('main/loss'))
+    trainer.extend(extensions.dump_graph('main/loss'))
     if not san_check:
         ## Comment out next line to save a checkpoint at each epoch, which enable you to restart training loop from the saved point. Note that saving a checkpoint may cost a few minutes.
         trainer.extend(extensions.snapshot(), trigger=(1, 'epoch'))
@@ -133,9 +136,11 @@ def get_prediction(model_dir, split, device=None):
     model_type = settings['model_type']
 
     if model_type in [
-            'vis+lng', 'vis+lng+gtroi', 'vis+lng+plclcroi', 'vis+lng+ddpnroi'
+            'vis+lng', 'vis+lng+gtroi', 'vis+lng+plclc', 'vis+lng+ddpn'
     ]:
         model = Switching_iParaphraseNet()
+    elif model_type in ['wo_gate+vis+lng+plclcroi', 'wo_gate+vis+lng+ddpnroi']:
+        model = NaiveFuse_iParaphraseNet()
     elif model_type in ['vis', 'vis+gtroi', 'vis+plclcroi', 'vis+ddpnroi']:
         model = ImageOnlyNet()
     elif model_type == 'lng':
