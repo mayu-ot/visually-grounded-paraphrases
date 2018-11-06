@@ -168,7 +168,8 @@ class MultiModalClassifierNet(chainer.Chain):
         return h
 
 class GateNet(chainer.Chain):
-    def __init__(self, out_size):
+    def __init__(self, out_size, mode='lng'):
+        self.mode = mode
         super(GateNet, self).__init__()
         w = initializers.HeNormal()
         with self.init_scope():
@@ -176,7 +177,13 @@ class GateNet(chainer.Chain):
             self.g_img = L.Linear(None, out_size, initialW=w)
             
     def __call__(self, *args):
-        x, _ = args # use only the first modality
+        if self.mode == 'lng':
+            x, _ = args # use only the first modality
+        elif self.mode == 'vis':
+            _, x = args
+        else:
+            raise RuntimeError('invaild gate mode')
+            
         g_l = F.sigmoid(self.g_phr(x))
         g_v = F.sigmoid(self.g_img(x))
         return g_l, g_v
@@ -206,18 +213,21 @@ class GatedClassifierNet(MultiModalClassifierNet):
         return h
     
 class Switching_iParaphraseNet(chainer.Chain):
-    def __init__(self, mult_modal_gate=False):
+    def __init__(self, gate_mode=None):
         super(Switching_iParaphraseNet, self).__init__()
-        self.setup_layers(mult_modal_gate)
+        self.setup_layers(gate_mode)
         
-    def setup_layers(self, mult_modal_gate):
+    def setup_layers(self, gate_mode):
         with self.init_scope():
             self.phrase_net = PhraseNet(1000)
             self.vision_net = ImgNet(1000)
-            if mult_modal_gate:
+            if gate_mode == 'mult':
                 gate_net = MultiModalGateNet(300)
+            elif gate_mode in ['vis', 'lng']:
+                gate_net = GateNet(300, gate_mode)
             else:
-                gate_net = GateNet(300)
+                raise RuntimeError('invalid gate mode')
+                
                 
             self.classifier = GatedClassifierNet(300, gate_net)
 
@@ -252,7 +262,7 @@ class NaiveFuse_iParaphraseNet(Switching_iParaphraseNet):
     def __init__(self):
         super(NaiveFuse_iParaphraseNet, self).__init__()
         
-    def setup_layers(self):
+    def setup_layers(self, _):
         with self.init_scope():
             self.phrase_net = PhraseNet(1000)
             self.vision_net = ImgNet(1000)

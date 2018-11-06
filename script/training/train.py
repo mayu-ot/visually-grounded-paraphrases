@@ -16,6 +16,35 @@ from func.nets.gate_net import Switching_iParaphraseNet, ImageOnlyNet, PhraseOnl
 
 chainer.config.multiproc = True  # single proc is faster
 
+def get_model(model_type, gate_mode=None):
+    if gate_mode is None:
+        if model_type == 'vis':
+            model = ImageOnlyNet()
+        elif model_type == 'lng':
+            model = PhraseOnlyNet()
+        return model
+            
+    if gate_mode == 'off':
+        model = NaiveFuse_iParaphraseNet()
+    else:
+        model = Switching_iParaphraseNet(gate_mode)
+        
+    return model
+
+def get_data(pl_type, splits, san_check):
+    data = []
+    for s in splits:
+        if pl_type == 'plclc':
+            d = PLCLCDataset(s, san_check=san_check)
+        elif pl_type == 'ddpn':
+            d = DDPNDataset(s, san_check=san_check)
+        elif pl_type is None:
+            d = DDPNDataset(s, san_check=san_check)
+        
+        data.append(d)
+    
+    return data
+
 def train(san_check=False,
           epoch=5,
           lr=0.001,
@@ -24,7 +53,8 @@ def train(san_check=False,
           w_decay=None,
           out_pref='./checkpoints/',
           model_type='vis+lng',
-          alpha=None):
+          pl_type=None,
+          gate_mode=None):
     args = locals()
 
     time_stamp = dt.now().strftime("%Y%m%d-%H%M%S")
@@ -33,13 +63,8 @@ def train(san_check=False,
     json.dump(args, open(saveto + 'args', 'w'))
     print('output to', saveto)
     print('setup dataset...')
-
-    if model_type in ['vis+lng+plclc', 'vis+plclc']:
-        train = PLCLCDataset('train', san_check=san_check)
-        val = PLCLCDataset('val', san_check=san_check)
-    else:
-        train = DDPNDataset('train', san_check=san_check) 
-        val = DDPNDataset('val', san_check=san_check)
+    
+    train, val = get_data(pl_type, ['train', 'val'], san_check)
 
     if chainer.config.multiproc:
         train_iter = MultiprocessIterator(train, b_size, n_processes=2)
@@ -50,20 +75,8 @@ def train(san_check=False,
         val_iter = SerialIterator(val, b_size, shuffle=False, repeat=False)
 
     print('setup a model: %s' % model_type)
-
-    if model_type in [
-            'vis+lng', 'vis+lng+gtroi', 'vis+lng+plclc', 'vis+lng+ddpn']:
-        model = Switching_iParaphraseNet()
-    elif model_type in ['vis+lng+plclc+mg', 'vis+lng+ddpn+mg']:
-        model = Switching_iParaphraseNet(mult_modal_gate=True)
-    elif model_type in ['wo_gate+vis+lng+plclcroi', 'wo_gate+vis+lng+ddpnroi']:
-        model = NaiveFuse_iParaphraseNet()
-    elif model_type in ['vis', 'vis+gtroi', 'vis+plclcroi', 'vis+ddpnroi']:
-        model = ImageOnlyNet()
-    elif model_type == 'lng':
-        model = PhraseOnlyNet()
-    else:
-        raise RuntimeError('invalid model_type: %s' % model_type)
+    
+    model = get_model(model_type, gate_mode)
 
     opt = chainer.optimizers.Adam(lr)
     opt.setup(model)
@@ -135,18 +148,7 @@ def get_prediction(model_dir, split, device=None):
     print('setup a model ...')
     model_type = settings['model_type']
 
-    if model_type in [
-            'vis+lng', 'vis+lng+gtroi', 'vis+lng+plclc', 'vis+lng+ddpn'
-    ]:
-        model = Switching_iParaphraseNet()
-    elif model_type in ['wo_gate+vis+lng+plclcroi', 'wo_gate+vis+lng+ddpnroi']:
-        model = NaiveFuse_iParaphraseNet()
-    elif model_type in ['vis', 'vis+gtroi', 'vis+plclcroi', 'vis+ddpnroi']:
-        model = ImageOnlyNet()
-    elif model_type == 'lng':
-        model = PhraseOnlyNet()
-    else:
-        raise RuntimeError('invalid model_type: %s' % model_type)
+    model = get_model(model_type)
 
     chainer.serializers.load_npz(model_dir + 'model', model)
 
@@ -154,12 +156,8 @@ def get_prediction(model_dir, split, device=None):
         chainer.cuda.get_device_from_id(device).use()
         model.to_gpu()
 
-    if model_type in ['vis+lng+gtroi', 'vis+gtroi']:
-        test = GTJitterDataset('test', san_check=False)
-    elif model_type in ['vis+lng+ddpnroi', 'vis+ddpnroi']:
-        test = DDPNDataset('test', san_check=False)
-    else:
-        test = PLCLCDataset(split, san_check=False)
+    test = get_data(model_type, [split], san_check=False)
+    test = test[0]
 
     test_iter = SerialIterator(
         test, batch_size=1000, repeat=False, shuffle=False)
@@ -200,8 +198,9 @@ def evaluate(model_dir, split, device=None):
     best_threshold = thresholds[best_ind]
 
     print('validation:')
-    print('prec: %.4f, rec: %.4f, f1: %.4f' % (precision[best_ind],
-                                               recall[best_ind], f1[best_ind]))
+    print('prec: %.2f, rec: %.2f, f1: %.2f' % (precision[best_ind] * 100,
+                                               recall[best_ind] * 100,
+                                               f1[best_ind] * 100))
 
     df = get_prediction(model_dir, 'test', device)
 
@@ -209,14 +208,14 @@ def evaluate(model_dir, split, device=None):
     y_pred = df.score > best_threshold
     df['ypred'] = y_pred
 
-    prec = precision_score(y_true, y_pred)
-    rec = recall_score(y_true, y_pred)
-    f1 = f1_score(y_true, y_pred)
+    prec = precision_score(y_true, y_pred) * 100
+    rec = recall_score(y_true, y_pred) * 100
+    f1 = f1_score(y_true, y_pred) * 100
     print('test:')
-    print('prec: %.4f, rec: %.4f, f1: %.4f' % (prec, rec, f1))
+    print('prec: %.2f, rec: %.2f, f1: %.2f' % (prec, rec, f1))
 
     with open(model_dir + 'res_%s_scores.txt' % split, 'w') as f:
-        f.write('prec: %.4f, rec: %.4f, f1: %.4f' % (prec, rec, f1))
+        f.write('prec: %.2f, rec: %.2f, f1: %.2f' % (prec, rec, f1))
 
     df.to_csv(model_dir + 'res_%s.csv' % split)
 
@@ -248,6 +247,8 @@ def main():
     parser.add_argument(
         '--settings', type=str, default=None, help='path to arg file')
     parser.add_argument('--model_type', '-mt', default='vis+lng')
+    parser.add_argument('--pl_type', '-pt', default='ddpn')
+    parser.add_argument('--gate_mode', '-gm', default='off')
     parser.add_argument(
         '--eval',
         type=str,
@@ -283,6 +284,8 @@ def main():
             device=args_dic['device'],
             w_decay=args_dic['w_decay'],
             model_type=args_dic['model_type'],
+            pl_type=args_dic['pl_type'],
+            gate_mode=args_dic['gate_mode'],
             out_pref=args_dic['out_pref'])
 
 

@@ -75,7 +75,7 @@ class DDPNBBoxDataset(chainer.dataset.DatasetMixin):
     def __init__(self, split):
         df = pd.read_csv('data/phrase_localization/ddpn/fix_split_%s.csv' % split)
         sub_df = pd.DataFrame(
-            df.iloc[:, 4:8].values, columns=['xmin', 'ymin', 'xmax', 'ymax'])
+            df.iloc[:, 5:9].values, columns=['xmin', 'ymin', 'xmax', 'ymax'])
         sub_df['image'] = df.image
         sub_df['phrase'] = df.phrase
         self.df = sub_df

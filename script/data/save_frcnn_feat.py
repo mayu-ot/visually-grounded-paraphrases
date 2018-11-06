@@ -60,10 +60,10 @@ if __name__ == '__main__':
         raise RuntimeError('invalid method name: %s' % args.method)
 
     feat = extract_frcnn_feat(bbox_data, args.device)
-    np.save('data/region_feat/%s_roi-frcnn/%s' % (args.method, args.split),
+    np.save('data/phrase_localization/region_feat/%s_roi-frcnn/%s' % (args.method, args.split),
             feat)
 
     align = get_alignment(bbox_data)
     json.dump(
         align,
-        open('data/%s/vis_indices_%s.json' % (args.method, args.split), 'w'))
+        open('data/phrase_localization/%s/vis_indices_%s.json' % (args.method, args.split), 'w'))
