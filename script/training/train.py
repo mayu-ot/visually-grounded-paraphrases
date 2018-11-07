@@ -56,7 +56,7 @@ def train(san_check=False,
           pl_type=None,
           gate_mode=None):
     args = locals()
-
+    
     time_stamp = dt.now().strftime("%Y%m%d-%H%M%S")
     saveto = out_pref + 'sc_' * san_check + time_stamp + '/'
     os.makedirs(saveto)
@@ -147,8 +147,10 @@ def get_prediction(model_dir, split, device=None):
 
     print('setup a model ...')
     model_type = settings['model_type']
-
-    model = get_model(model_type)
+    gate_mode = settings['gate_mode']
+    pl_type = settings['pl_type']
+    
+    model = get_model(model_type, gate_mode)
 
     chainer.serializers.load_npz(model_dir + 'model', model)
 
@@ -156,7 +158,7 @@ def get_prediction(model_dir, split, device=None):
         chainer.cuda.get_device_from_id(device).use()
         model.to_gpu()
 
-    test = get_data(model_type, [split], san_check=False)
+    test = get_data(pl_type, [split], san_check=False)
     test = test[0]
 
     test_iter = SerialIterator(
@@ -229,10 +231,7 @@ def main():
     parser.add_argument(
         '--device', '-d', type=int, default=None, help='gpu device id <int>')
     parser.add_argument(
-        '--b_size',
-        '-b',
-        type=int,
-        default=500,
+        '--b_size', '-b', type=int, default=500,
         help='minibatch size <int> (default 500)')
     parser.add_argument(
         '--epoch', '-e', type=int, default=5, help='maximum epoch <int>')

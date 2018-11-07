@@ -248,6 +248,17 @@ class GTJitterDataset(PreCompFeatDataset):
                 'data/phrase_localization/region_feat/jitter_roi-frcnn_asp0.66_off0.4/rois_%s.npy'
                 % split)
 
+def get_most_similar(q, targ):
+    best_d = np.inf
+    for x in targ:
+        d = edit_distance(q, x)
+        if d < best_d:
+            best_d = d
+            res = x
+        if best_d == 0:
+            break
+    return x
+        
 
 class DDPNDataset(PreCompFeatDataset):
     def setup(self, split):
@@ -269,7 +280,13 @@ class DDPNDataset(PreCompFeatDataset):
         return len(self.pair_data)
 
     def get_nid(self, img_id, phrase):
-        return self.vis_indices[str(img_id)][phrase]
+        map_dict = self.vis_indices[str(img_id)]
+        try:
+            return map_dict[phrase.lower()]
+        except: 
+            r = get_most_similar(phrase.lower(), map_dict.keys())
+            self.vis_indices[str(img_id)][phrase.lower()] = map_dict[r] # add item
+            return map_dict[r]
 
     def get_example(self, i):
         img_id = self.pair_data.at[i, 'image']

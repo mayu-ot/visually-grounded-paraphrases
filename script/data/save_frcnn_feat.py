@@ -2,33 +2,53 @@ import numpy as np
 import chainer
 import sys
 sys.path.append('./')
-from func.datasets.converters import cvrt_frcnn_input
 from func.datasets.datasets import DDPNBBoxDataset, PLCLCBBoxDataset, BBoxDataset
 from func.nets.faster_rcnn import FasterRCNNExtractor
 import progressbar
 import json
+from imageio import imread
+from chainer.dataset.convert import to_device
 
 
-def extract_frcnn_feat(bbox_data, device):
+def extract_frcnn_feat(df, device):
     model = FasterRCNNExtractor(n_fg_class=20, pretrained_model='voc07')
     chainer.cuda.get_device_from_id(device).use()
     model.to_gpu()
 
-    feat = np.zeros((len(bbox_data), 4096)).astype('f')
-    roi_indices = model.xp.zeros((1, )).astype('i')
-    b_size = 30
+    feat = np.zeros((len(df), 4096)).astype('f')
+    
+    bbox_iter = get_imagebbox_generator(df)
+    N = df.image.unique().size
+    
+    j = 0
+    
+    indices = {}
+    
+    with progressbar.ProgressBar(max_value=N) as bar:
+        
+        for i, items in enumerate(bbox_iter):
+            img, bbox, phrase, name = items
+            
+            # preprocess image
+            img = img.transpose(2, 0, 1)
+            img = model.prepare(img.astype(np.float32))
+            img = to_device(device, img)
+            
+            bbox = to_device(device, bbox.astype(np.float32))            
+            bbox_indices = model.xp.zeros((len(bbox), )).astype('i')
+            
+            with chainer.no_backprop_mode(), chainer.using_config('train', False):
+                y = model.extract(img[None, :], bbox, bbox_indices)
+            
+            y.to_cpu()
+            n = len(y)
+            feat[j:j+n, : ] = y.data[:]
+            indices[str(name)] = {k: v for k, v in zip(phrase, range(j, j+n))}
+            j += n
+            
+            bar.update(i)
 
-    for i in progressbar.progressbar(range(len(bbox_data))):
-        batch = [bbox_data[i]]
-        im, roi = cvrt_frcnn_input(batch, device)
-        with chainer.no_backprop_mode(), chainer.using_config('train', False):
-            im = im[0]
-            y = model.extract(im[None, :], roi, roi_indices)
-
-        y.to_cpu()
-        feat[i, :] = y.data[:]
-
-    return feat
+    return feat, indices
 
 
 def get_alignment(bbox_data):
@@ -41,6 +61,13 @@ def get_alignment(bbox_data):
 
     return align
 
+def get_imagebbox_generator(df):
+    grouped = df.groupby(['image'])
+    for name, group in grouped:
+        im = imread('data/flickr30k-images/%s.jpg'%name)
+        bbox = group[['ymin', 'xmin', 'ymax', 'xmax']].values
+        phrase = group.phrase
+        yield im, bbox, phrase, name
 
 if __name__ == '__main__':
     import argparse
@@ -58,12 +85,13 @@ if __name__ == '__main__':
         bbox_data = BBoxDataset(args.split)
     else:
         raise RuntimeError('invalid method name: %s' % args.method)
-
-    feat = extract_frcnn_feat(bbox_data, args.device)
+    
+    df = bbox_data.df.copy()
+    
+    feat, align = extract_frcnn_feat(df, args.device)
     np.save('data/phrase_localization/region_feat/%s_roi-frcnn/%s' % (args.method, args.split),
             feat)
 
-    align = get_alignment(bbox_data)
     json.dump(
         align,
         open('data/phrase_localization/%s/vis_indices_%s.json' % (args.method, args.split), 'w'))
