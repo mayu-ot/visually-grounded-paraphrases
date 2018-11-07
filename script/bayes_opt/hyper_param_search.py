@@ -67,7 +67,8 @@ if __name__ == '__main__':
         },
     ]
     
-    out_dir = './bo_out/%s/' % '+'.join([args.model_type, args.pl_type, args.gate_mode])
+    configs = [x for x in [args.model_type, args.pl_type, args.gate_mode] if x is not None]
+    out_dir = './bo_out/%s/' % '+'.join(configs)
     prob = GPyOpt.methods.BayesianOptimization(
         lambda params: wrapper(params, args.model_type, args.pl_type, args.gate_mode, args.device, out_dir),
         bounds,
