@@ -325,3 +325,12 @@ class PLCLCDataset(DDPNDataset):
                 json.dump(vis_indices, f)
 
         self.vis_indices = vis_indices
+        
+    def get_nid(self, img_id, phrase):
+        map_dict = self.vis_indices[str(img_id)]
+        try:
+            return map_dict[phrase]
+        except: 
+            r = get_most_similar(phrase, map_dict.keys())
+            self.vis_indices[str(img_id)][phrase] = map_dict[r] # add item
+            return map_dict[r]
