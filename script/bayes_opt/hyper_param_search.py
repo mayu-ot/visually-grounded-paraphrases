@@ -49,7 +49,7 @@ if __name__ == '__main__':
         '--device', '-d', type=int, default=0, help='gpu device id <int>')
     parser.add_argument('--model_type', '-mt', default='vis+lng')
     parser.add_argument('--pl_type', '-pt', default='ddpn')
-    parser.add_argument('--gate_mode', '-gm', default='off')
+    parser.add_argument('--gate_mode', '-gm', default=None)
     args = parser.parse_args()
 
     bounds = [
