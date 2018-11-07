@@ -247,7 +247,7 @@ def main():
         '--settings', type=str, default=None, help='path to arg file')
     parser.add_argument('--model_type', '-mt', default='vis+lng')
     parser.add_argument('--pl_type', '-pt', default='ddpn')
-    parser.add_argument('--gate_mode', '-gm', default='off')
+    parser.add_argument('--gate_mode', '-gm', default=None)
     parser.add_argument(
         '--eval',
         type=str,
