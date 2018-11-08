@@ -188,11 +188,24 @@ class GateNet(chainer.Chain):
         g_v = F.sigmoid(self.g_img(x))
         return g_l, g_v
     
-class MultiModalGateNet(GateNet):
+# class MultiModalGateNet(GateNet):
+#     def __call__(self, *args):
+#         x = F.concat(args, axis=1) # use all modality
+#         g_l = F.sigmoid(self.g_phr(x))
+#         g_v = F.sigmoid(self.g_img(x))
+#         return g_l, g_v
+    
+class MultiModalGateNet(chainer.Chain):
+    def __init__(self, out_size):
+        super(MultiModalGateNet, self).__init__()
+        w = initializers.HeNormal()
+        with self.init_scope():
+            self.gate_layer = L.Linear(None, out_size, initialW=w)
+            
     def __call__(self, *args):
         x = F.concat(args, axis=1) # use all modality
-        g_l = F.sigmoid(self.g_phr(x))
-        g_v = F.sigmoid(self.g_img(x))
+        g_l = F.sigmoid(self.gate_layer(x))
+        g_v = 1-g_l
         return g_l, g_v
     
 class GatedClassifierNet(MultiModalClassifierNet):
@@ -292,16 +305,16 @@ class LateSwitching_iParaphraseNet(chainer.Chain):
     def __init__(self):
         super(LateSwitching_iParaphraseNet, self).__init__()
         with self.init_scope():
-            self.language_net = BaseNet(1000, 1000)
-            self.vision_net = BaseNet(1000, 1000)
-            self.gate_net = MultiModalGateNet(300)
+            self.language_net = BaseNet(1000, 300)
+            self.vision_net = BaseNet(1000, 300)
+            self.gate_net = MultiModalGateNet(1)
             
     def __call__(self, phr_1, phr_2, vis_1, vis_2, l):
         y_l = self.language_net(phr_1, phr_2)
         y_v = self.vision_net(vis_1, vis_2)
         
-        w = self.gate_net(phr_1, phr_2, vis_1, vis_2)
-        y = w * y_l + (1-w)*y_v
+        g_l, g_v = self.gate_net(phr_1, phr_2, vis_1, vis_2)
+        y = g_l * y_l + g_v * y_v
         y = F.flatten(y)
 
         if chainer.config.train == False:

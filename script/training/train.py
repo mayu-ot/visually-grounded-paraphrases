@@ -12,21 +12,28 @@ import sys
 sys.path.append('./')
 from func.datasets.datasets import GTJitterDataset, PLCLCDataset, DDPNDataset
 from func.datasets.converters import cvrt_pre_comp_feat
-from func.nets.gate_net import Switching_iParaphraseNet, ImageOnlyNet, PhraseOnlyNet, NaiveFuse_iParaphraseNet
+from func.nets.gate_net import Switching_iParaphraseNet, ImageOnlyNet, PhraseOnlyNet, NaiveFuse_iParaphraseNet, LateSwitching_iParaphraseNet
 
 chainer.config.multiproc = True  # single proc is faster
 
 def get_model(model_type, gate_mode=None):
     if gate_mode is None:
         if model_type == 'vis':
+            print('image only')
             model = ImageOnlyNet()
         elif model_type == 'lng':
+            print('phrase only')
             model = PhraseOnlyNet()
         return model
             
     if gate_mode == 'off':
+        print('gate turned off')
         model = NaiveFuse_iParaphraseNet()
+    elif gate_mode == 'late':
+        print('late fusion')
+        model = LateSwitching_iParaphraseNet()
     else:
+        print('ours: %s'%gate_mode)
         model = Switching_iParaphraseNet(gate_mode)
         
     return model
@@ -48,7 +55,7 @@ def get_data(pl_type, splits, san_check):
 def train(san_check=False,
           epoch=5,
           lr=0.001,
-          b_size=1000,
+          b_size=500,
           device=0,
           w_decay=None,
           out_pref='./checkpoints/',
@@ -72,7 +79,7 @@ def train(san_check=False,
             val, b_size, shuffle=False, repeat=False, n_processes=2)
     else:
         train_iter = SerialIterator(train, b_size)
-        val_iter = SerialIterator(val, b_size, shuffle=False, repeat=False)
+        val_iter = SerialIterator(val, b_size*2, shuffle=False, repeat=False)
 
     print('setup a model: %s' % model_type)
     
@@ -104,7 +111,7 @@ def train(san_check=False,
     
     if not san_check:
         trainer.extend(
-            extensions.ExponentialShift('alpha', 0.5), trigger=(1, 'epoch'))
+            extensions.ExponentialShift('alpha', 0.1), trigger=(1, 'epoch'))
 
     # # Comment out to enable visualization of a computational graph.
     trainer.extend(extensions.dump_graph('main/loss'))
@@ -162,7 +169,7 @@ def get_prediction(model_dir, split, device=None):
     test = test[0]
 
     test_iter = SerialIterator(
-        test, batch_size=1000, repeat=False, shuffle=False)
+        test, batch_size=2000, repeat=False, shuffle=False)
     conv_f = cvrt_pre_comp_feat
 
     s_i = 0

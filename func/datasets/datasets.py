@@ -7,7 +7,35 @@ from chainer.dataset.convert import to_device
 from collections import defaultdict
 import json
 from nltk.metrics import edit_distance
+import random
 
+def lang_iou(x, y):
+    x = set(x.split('+'))
+    y = set(y.split('+'))
+    inter = x.intersection(y)
+    union = x.union(y)
+    iou = len(inter) / len(union)
+    return iou
+
+def get_phrase_ious(df):
+    p_ious = []
+    for _, row in df.iterrows():
+        p_iou = lang_iou(row.phrase1, row.phrase2)
+        p_ious.append(p_iou)
+
+    p_ious = np.asarray(p_ious)
+    df['p_iou'] = p_ious
+    return df
+
+def downsample_easynegatives(df):
+    p_ious = df.p_iou
+    easy_pos, = np.where(np.logical_and(df.ytrue==True, p_ious==0))
+    easy_neg, = np.where(np.logical_and(df.ytrue==False, p_ious==0))
+    
+    random.seed(1234)
+    drop_items = random.sample(easy_neg.tolist(), len(easy_neg)//2)
+    return df.drop(drop_items)
+    
 
 def get_agg_roi_df(split):
     gtroi_df = pd.read_csv(
@@ -114,7 +142,20 @@ class PLCLCBBoxDataset(DDPNBBoxDataset):
 
 class iParaphraseDataset(chainer.dataset.DatasetMixin):
     def __init__(self, split, san_check=False):
-        pair_data = pd.read_csv('data/phrase_pair_%s.csv' % split, index_col=0)
+        
+        if split == 'train':
+            print('downsample easy negatives...')
+            fname = 'data/phrase_pair_%s_wt_pious.csv' % split
+            if os.path.exists(fname):
+                pair_data = pd.read_csv(fname, index_col=0)
+            else:
+                pair_data = pd.read_csv('data/phrase_pair_%s.csv' % split, index_col=0)
+                pd.to_csv(fname)
+                pair_data = get_phrase_ious(pair_data)
+            pair_data = downsample_easynegatives(pair_data)
+            pair_data = pair_data.reset_index(drop=True)
+        else:
+            pair_data = pd.read_csv('data/phrase_pair_%s.csv' % split, index_col=0)
 
         if san_check:
             skip = 2000 if split == 'train' else 1000
