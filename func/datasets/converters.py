@@ -62,7 +62,7 @@ def cvrt_bbox(batch, device=None, aspect_band=2 / 3, offset_band=0.4):
 
 
 def cvrt_frcnn_input(batch, device=None):
-    im = [b[0].transpose(2, 0, 1).astype('f') for b in batch]
+    im = [b[0].transpose(2, 0, 1) for b in batch]
     roi = [b[1] for b in batch]
     roi = np.vstack(roi)
 

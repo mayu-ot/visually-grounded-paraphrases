@@ -28,7 +28,6 @@ class FasterRCNNExtractor(FasterRCNNVGG16):
                       Each item is (y_min, x_min, y_max, x_max).
         roi_indices: indices to each roi to image
         '''
-
         h = self.extractor(x)
         feat = self.extract_head(h, bbox, roi_indices)
         return feat

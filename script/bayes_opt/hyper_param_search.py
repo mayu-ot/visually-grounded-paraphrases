@@ -5,28 +5,27 @@ import GPyOpt
 import os
 import sys
 sys.path.append('./script/training')
-from train_pre_comp_feat import train
+from train import train
 
 COUNT = 0
 
 
-def wrapper(params, model_type, device):
+def wrapper(params, model_type, pl_type, gate_mode, device, out_dir):
     global COUNT
     COUNT += 1
 
-    lr, dr_ratio, w_decay = params[0]
+    lr, w_decay = params[0]
     lr = 10**lr
     w_decay = 10**w_decay
-
-    out_dir = './bo_out/%s/' % (model_type)
 
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
 
     best_val = train(
         model_type=model_type,
+        pl_type=pl_type,
+        gate_mode=gate_mode,
         lr=lr,
-        dr_ratio=dr_ratio,
         w_decay=w_decay,
         epoch=5,
         device=device,
@@ -48,7 +47,9 @@ if __name__ == '__main__':
         help='maximum iteration for Bayesian optimization')
     parser.add_argument(
         '--device', '-d', type=int, default=0, help='gpu device id <int>')
-    parser.add_argument('--model_type', type=str, default='vis+lng')
+    parser.add_argument('--model_type', '-mt', default='vis+lng')
+    parser.add_argument('--pl_type', '-pt', default='ddpn')
+    parser.add_argument('--gate_mode', '-gm', default=None)
     args = parser.parse_args()
 
     bounds = [
@@ -59,27 +60,22 @@ if __name__ == '__main__':
             'dimensionality': 1
         },
         {
-            'name': 'dr_ratio',
-            'type': 'continuous',
-            'domain': (0., .9),
-            'dimensionality': 1
-        },
-        {
             'name': 'w_decay',
             'type': 'continuous',
             'domain': (-7, -3),
             'dimensionality': 1
         },
     ]
-
+    
+    configs = [x for x in [args.model_type, args.pl_type, args.gate_mode] if x is not None]
+    out_dir = './bo_out/%s/' % '+'.join(configs)
     prob = GPyOpt.methods.BayesianOptimization(
-        lambda params: wrapper(params, args.model_type, args.device),
+        lambda params: wrapper(params, args.model_type, args.pl_type, args.gate_mode, args.device, out_dir),
         bounds,
         acquisition_type='EI',
     )
 
     now = datetime.datetime.now()
-    out_dir = './bo_out/%s/' % (args.model_type)
 
     report_file = out_dir + 'bo_report_%s.txt' % (
         "{0:%Y-%m-%d %H:%M:%S}".format(now))
