@@ -16,6 +16,9 @@ from func.nets.gate_net import Switching_iParaphraseNet, ImageOnlyNet, PhraseOnl
 
 chainer.config.multiproc = True  # single proc is faster
 
+def resample_data(trainer):
+    trainer.updater._iterators['main'].dataset.resample()
+
 def get_model(model_type, gate_mode=None):
     if gate_mode is None:
         if model_type == 'vis':
@@ -137,6 +140,8 @@ def train(san_check=False,
         ]),
         trigger=log_interval)
     trainer.extend(extensions.ProgressBar(update_interval=log_interval[0]))
+    
+    trainer.extend(resample_data, trigger=(1, 'epoch'))
 
     print('start training')
     trainer.run()

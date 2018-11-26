@@ -32,8 +32,9 @@ def downsample_easynegatives(df):
     easy_pos, = np.where(np.logical_and(df.ytrue==True, p_ious==0))
     easy_neg, = np.where(np.logical_and(df.ytrue==False, p_ious==0))
     
-    random.seed(1234)
-    drop_items = random.sample(easy_neg.tolist(), len(easy_neg)//2)
+    # random.seed(1234)
+    drop_n = len(easy_neg)-len(easy_pos)
+    drop_items = random.sample(easy_neg.tolist(), drop_n // 2)
     return df.drop(drop_items)
     
 
@@ -144,26 +145,18 @@ class iParaphraseDataset(chainer.dataset.DatasetMixin):
     def __init__(self, split, san_check=False):
         
         if split == 'train':
-            print('downsample easy negatives...')
-            fname = 'data/phrase_pair_%s_wt_pious.csv' % split
-            if os.path.exists(fname):
-                pair_data = pd.read_csv(fname, index_col=0)
-            else:
-                pair_data = pd.read_csv('data/phrase_pair_%s.csv' % split, index_col=0)
-                pd.to_csv(fname)
-                pair_data = get_phrase_ious(pair_data)
-            pair_data = downsample_easynegatives(pair_data)
-            pair_data = pair_data.reset_index(drop=True)
+            self.resample()
+            pair_data = self.pair_data
         else:
             pair_data = pd.read_csv('data/phrase_pair_%s.csv' % split, index_col=0)
-
+        
         if san_check:
             skip = 2000 if split == 'train' else 1000
             pair_data = pair_data.iloc[::skip]
             pair_data = pair_data.reset_index(drop=True)
-
+        
         self.pair_data = pair_data
-
+        
         self.gtroi_data = pd.read_csv(
             'data/phrase_localization/gt-roi/gt_roi_cord_%s.csv' % split, index_col=0)
         self.img_root = 'data/flickr30k-images/'
@@ -181,6 +174,22 @@ class iParaphraseDataset(chainer.dataset.DatasetMixin):
 
     def __len__(self):
         return len(self.pair_data)
+    
+    def resample(self):
+        print('resample dataset ...\n')
+        fname = 'data/phrase_pair_train_wt_pious.csv'
+        
+        if os.path.exists(fname):
+            pair_data = pd.read_csv(fname, index_col=0)
+        else:
+            pair_data = pd.read_csv('data/phrase_pair_train.csv', index_col=0)
+            pair_data = get_phrase_ious(pair_data)
+            pair_data.to_csv(fname)
+            
+        pair_data = downsample_easynegatives(pair_data)
+        pair_data = pair_data.reset_index(drop=True)
+            
+        self.pair_data = pair_data
 
     def get_phrases(self, i):
         return self.pair_data.at[i, 'phrase1'], self.pair_data.at[i, 'phrase2']
@@ -298,7 +307,7 @@ def get_most_similar(q, targ):
             res = x
         if best_d == 0:
             break
-    return x
+    return res
         
 
 class DDPNDataset(PreCompFeatDataset):

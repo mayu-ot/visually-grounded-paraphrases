@@ -188,25 +188,25 @@ class GateNet(chainer.Chain):
         g_v = F.sigmoid(self.g_img(x))
         return g_l, g_v
     
-# class MultiModalGateNet(GateNet):
-#     def __call__(self, *args):
-#         x = F.concat(args, axis=1) # use all modality
-#         g_l = F.sigmoid(self.g_phr(x))
-#         g_v = F.sigmoid(self.g_img(x))
-#         return g_l, g_v
-    
-class MultiModalGateNet(chainer.Chain):
-    def __init__(self, out_size):
-        super(MultiModalGateNet, self).__init__()
-        w = initializers.HeNormal()
-        with self.init_scope():
-            self.gate_layer = L.Linear(None, out_size, initialW=w)
-            
+class MultiModalGateNet(GateNet):
     def __call__(self, *args):
         x = F.concat(args, axis=1) # use all modality
-        g_l = F.sigmoid(self.gate_layer(x))
-        g_v = 1-g_l
+        g_l = F.sigmoid(self.g_phr(x))
+        g_v = F.sigmoid(self.g_img(x))
         return g_l, g_v
+    
+# class MultiModalGateNet(chainer.Chain):
+#     def __init__(self, out_size):
+#         super(MultiModalGateNet, self).__init__()
+#         w = initializers.HeNormal()
+#         with self.init_scope():
+#             self.gate_layer = L.Linear(None, out_size, initialW=w)
+            
+#     def __call__(self, *args):
+#         x = F.concat(args, axis=1) # use all modality
+#         g_l = F.sigmoid(self.gate_layer(x))
+#         g_v = 1-g_l
+#         return g_l, g_v
     
 class GatedClassifierNet(MultiModalClassifierNet):
     def __init__(self, out_size, gate_net=None):
@@ -220,6 +220,11 @@ class GatedClassifierNet(MultiModalClassifierNet):
         h_l = F.tanh(self.bn_l0(self.l_phr(x_p))) # added batchnormalization
         h_v = F.tanh(self.bn_v0(self.l_img(x_v))) # added batchnormalization
         h = g_l * h_l + g_v * h_v
+        # h = F.concat([g_l * h_l, g_v * h_v], axis=1)
+        # g_l = F.broadcast_to(g_l, h_l.shape)
+        # g_v = F.broadcast_to(g_v, h_v.shape)
+        # h = g_l * h_l + g_v * h_v
+        
         h = F.relu(self.bn_1(self.l_1(h)))
         h = self.cls(h)
         h = F.flatten(h)
