@@ -3,7 +3,7 @@ Chainer implementation of Visually Grounded Paraphrase (VGP) identification usin
 # Data
 Downlaod the Flickr30K dataset and copy `flickr30k-images/` under `data/` directory.
 
-# Exttact visual features
+# Extract visual features
 For extracting visual features using DDPN phrase localization results, run
 ```
 python script/data/save_frcnn_feat.py --method ddpn --split train
