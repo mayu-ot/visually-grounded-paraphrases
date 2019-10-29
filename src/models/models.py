@@ -5,6 +5,7 @@ from chainer import cuda
 from chainer import initializers
 from chainer import reporter
 
+
 def binary_classification_summary(y, t):
     xp = cuda.get_array_module(y)
     y = y.data
@@ -27,8 +28,9 @@ def binary_classification_summary(y, t):
 
     return prec, recall, f1
 
+
 class SingleModalClassifierNet(chainer.Chain):
-    
+
     def __init__(self, out_size):
         super(SingleModalClassifierNet, self).__init__()
         w = initializers.HeNormal()
@@ -45,23 +47,24 @@ class SingleModalClassifierNet(chainer.Chain):
         h = self.cls(h)
         h = F.flatten(h)
         return h
-    
+
+
 class PhraseOnlyNet(chainer.Chain):
     def __init__(self):
         super(PhraseOnlyNet, self).__init__()
         with self.init_scope():
             self.phrase_net = PhraseNet(1000)
             self.classifier = SingleModalClassifierNet(300)
-            
+
     def predict(self, phr_1, phr_2, xvis_1, xvis_2, l):
         _ = self(phr_1, phr_2, xvis_1, xvis_2, l)
         y = self.y
         return y
-    
+
     def __call__(self, phr_1, phr_2, vis_1, vis_2, l):
         h = self.phrase_net(phr_1, phr_2)
         h = self.classifier(h)
-        
+
         if chainer.config.train == False:
             self.y = F.sigmoid(h)
             self.t = l
@@ -75,25 +78,26 @@ class PhraseOnlyNet(chainer.Chain):
             'recall': recall,
             'f1': fbeta
         }, self)
-        
+
         return loss
-    
+
+
 class ImageOnlyNet(chainer.Chain):
     def __init__(self):
         super(ImageOnlyNet, self).__init__()
         with self.init_scope():
             self.image_net = ImgNet(1000)
             self.classifier = SingleModalClassifierNet(300)
-            
+
     def predict(self, phr_1, phr_2, xvis_1, xvis_2, l):
         _ = self(phr_1, phr_2, xvis_1, xvis_2, l)
         y = self.y
         return y
-    
+
     def __call__(self, phr_1, phr_2, vis_1, vis_2, l):
         h = self.image_net(vis_1, vis_2)
         h = self.classifier(h)
-        
+
         if chainer.config.train == False:
             self.y = F.sigmoid(h)
             self.t = l
@@ -107,8 +111,9 @@ class ImageOnlyNet(chainer.Chain):
             'recall': recall,
             'f1': fbeta
         }, self)
-        
+
         return loss
+
 
 class MultiModalClassifierNet(chainer.Chain):
     def __init__(self, out_size):
@@ -117,12 +122,12 @@ class MultiModalClassifierNet(chainer.Chain):
         with self.init_scope():
             self.l_phr = L.Linear(None, out_size, initialW=w)
             self.l_img = L.Linear(None, out_size, initialW=w)
-            
+
             self.l_1 = L.Linear(None, out_size, initialW=w, nobias=True)
             self.bn_l0 = L.BatchNormalization(out_size)
             self.bn_v0 = L.BatchNormalization(out_size)
             self.bn_1 = L.BatchNormalization(out_size)
-            
+
             self.cls = L.Linear(None, 1, initialW=w)
 
     def __call__(self, x_p, x_v):
@@ -134,6 +139,7 @@ class MultiModalClassifierNet(chainer.Chain):
         h = F.flatten(h)
         return h
 
+
 class GateNet(chainer.Chain):
     def __init__(self, out_size, mode='lng'):
         self.mode = mode
@@ -142,26 +148,28 @@ class GateNet(chainer.Chain):
         with self.init_scope():
             self.g_phr = L.Linear(None, out_size, initialW=w)
             self.g_img = L.Linear(None, out_size, initialW=w)
-            
+
     def __call__(self, *args):
         if self.mode == 'lng':
-            x, _ = args # use only the first modality
+            x, _ = args  # use only the first modality
         elif self.mode == 'vis':
             _, x = args
         else:
             raise RuntimeError('invaild gate mode')
-            
+
         g_l = F.sigmoid(self.g_phr(x))
         g_v = F.sigmoid(self.g_img(x))
         return g_l, g_v
-    
+
+
 class MultiModalGateNet(GateNet):
     def __call__(self, *args):
-        x = F.concat(args, axis=1) # use all modality
+        x = F.concat(args, axis=1)  # use all modality
         g_l = F.sigmoid(self.g_phr(x))
         g_v = F.sigmoid(self.g_img(x))
         return g_l, g_v
-    
+
+
 class GatedClassifierNet(MultiModalClassifierNet):
     def __init__(self, out_size, gate_net=None):
         super(GatedClassifierNet, self).__init__(out_size)
@@ -171,22 +179,23 @@ class GatedClassifierNet(MultiModalClassifierNet):
 
     def __call__(self, x_p, x_v):
         g_l, g_v = self.gate_net(x_p, x_v)
-        h_l = F.tanh(self.bn_l0(self.l_phr(x_p))) # added batchnormalization
-        h_v = F.tanh(self.bn_v0(self.l_img(x_v))) # added batchnormalization
+        h_l = F.tanh(self.bn_l0(self.l_phr(x_p)))  # added batchnormalization
+        h_v = F.tanh(self.bn_v0(self.l_img(x_v)))  # added batchnormalization
         h = g_l * h_l + g_v * h_v
-        
+
         h = F.relu(self.bn_1(self.l_1(h)))
         h = self.cls(h)
         h = F.flatten(h)
         return h
-    
+
+
 class Switching_iParaphraseNet(chainer.Chain):
     def __init__(self, gate_mode=None):
         super(Switching_iParaphraseNet, self).__init__()
         self.setup_layers(gate_mode)
-        
+
     def setup_layers(self, gate_mode):
-        
+
         with self.init_scope():
             self.phrase_net = PhraseNet(1000)
             self.vision_net = ImgNet(1000)
@@ -196,7 +205,7 @@ class Switching_iParaphraseNet(chainer.Chain):
                 gate_net = GateNet(300, gate_mode)
             else:
                 raise RuntimeError('invalid gate mode')
-                
+
             self.classifier = GatedClassifierNet(300, gate_net)
 
     def predict(self, phr_1, phr_2, xvis_1, xvis_2, l):
@@ -207,9 +216,9 @@ class Switching_iParaphraseNet(chainer.Chain):
     def __call__(self, phr_1, phr_2, vis_1, vis_2, l):
         h_p = self.phrase_net(phr_1, phr_2)
         h_v = self.vision_net(vis_1, vis_2)
-        
+
         h = self.classifier(h_p, h_v)
-        
+
         if chainer.config.train == False:
             self.y = F.sigmoid(h)
             self.t = l
@@ -223,19 +232,21 @@ class Switching_iParaphraseNet(chainer.Chain):
             'recall': recall,
             'f1': fbeta
         }, self)
-        
+
         return loss
+
 
 class NaiveFuse_iParaphraseNet(Switching_iParaphraseNet):
     def __init__(self):
         super(NaiveFuse_iParaphraseNet, self).__init__()
-        
+
     def setup_layers(self, _):
         with self.init_scope():
             self.phrase_net = PhraseNet(1000)
             self.vision_net = ImgNet(1000)
             self.classifier = MultiModalClassifierNet(300)
-    
+
+
 class BaseNet(chainer.Chain):
     def __init__(self, h_size1, h_size2):
         super(BaseNet, self).__init__()
@@ -246,15 +257,16 @@ class BaseNet(chainer.Chain):
             self.bn_0 = L.BatchNormalization(h_size1)
             self.bn_1 = L.BatchNormalization(h_size2)
             self.cls = L.Linear(None, 1)
-    
+
     def __call__(self, x0, x1):
         h0 = F.relu(self.bn_0(self.l_0(x0)))
         h1 = F.relu(self.bn_0(self.l_0(x1)))
-        
+
         h = F.relu(self.bn_1(self.l_1(h0) + self.l_1(h1)))
         h = self.cls(h)
         return h
-            
+
+
 class LateSwitching_iParaphraseNet(chainer.Chain):
     def __init__(self):
         super(LateSwitching_iParaphraseNet, self).__init__()
@@ -262,11 +274,11 @@ class LateSwitching_iParaphraseNet(chainer.Chain):
             self.language_net = BaseNet(1000, 300)
             self.vision_net = BaseNet(1000, 300)
             self.gate_net = MultiModalGateNet(1)
-            
+
     def __call__(self, phr_1, phr_2, vis_1, vis_2, l):
         y_l = self.language_net(phr_1, phr_2)
         y_v = self.vision_net(vis_1, vis_2)
-        
+
         g_l, g_v = self.gate_net(phr_1, phr_2, vis_1, vis_2)
         y = g_l * y_l + g_v * y_v
         y = F.flatten(y)

@@ -9,6 +9,7 @@ import json
 from nltk.metrics import edit_distance
 import random
 
+
 def lang_iou(x, y):
     x = set(x.split('+'))
     y = set(y.split('+'))
@@ -16,6 +17,7 @@ def lang_iou(x, y):
     union = x.union(y)
     iou = len(inter) / len(union)
     return iou
+
 
 def get_phrase_ious(df):
     p_ious = []
@@ -26,6 +28,7 @@ def get_phrase_ious(df):
     p_ious = np.asarray(p_ious)
     df['p_iou'] = p_ious
     return df
+
 
 def get_agg_roi_df(split):
     gtroi_df = pd.read_csv(
@@ -38,6 +41,25 @@ def get_agg_roi_df(split):
         'xmax': np.max
     })
     return agg_df
+
+
+class PhraseDataset(chainer.dataset.DatasetMixin):
+    def __init__(self, split):
+        df = pd.read_csv('data/%s.csv' % split,
+                         usecols=['original_phrase1',
+                                  'original_phrase2',
+                                  'ytrue'])
+
+        self.phrase_a = df.values[:, 0]
+        self.phrase_b = df.values[:, 1]
+        self.label = df.values[:, 2]
+
+    def __len__(self):
+        return len(self.phrase_a)
+
+    def get_example(self, i):
+        return self.phrase_a[i], self.phrase_b[i], self.label[i]
+
 
 class BBoxDataset(chainer.dataset.DatasetMixin):
     def __init__(self, split):
@@ -128,33 +150,34 @@ class PLCLCBBoxDataset(DDPNBBoxDataset):
         df = df[['image', 'phrase', 'xmin', 'ymin', 'xmax', 'ymax']]
         self.df = df
 
+
 def downsample_easynegatives(df):
     p_ious = df.p_iou
-    easy_pos, = np.where(np.logical_and(df.ytrue==True, p_ious==0))
-    easy_neg, = np.where(np.logical_and(df.ytrue==False, p_ious==0))
-    
+    easy_pos, = np.where(np.logical_and(df.ytrue == True, p_ious == 0))
+    easy_neg, = np.where(np.logical_and(df.ytrue == False, p_ious == 0))
+
     # random.seed(1234)
     drop_n = len(easy_neg)-len(easy_pos)
     drop_items = random.sample(easy_neg.tolist(), drop_n // 2)
     return df.drop(drop_items)
-    
+
 
 class iParaphraseDataset(chainer.dataset.DatasetMixin):
     def __init__(self, split, san_check=False):
-        
+
         if split == 'train':
             self.resample()
             pair_data = self.pair_data
         else:
             pair_data = pd.read_csv('data/phrase_pair_%s.csv' % split, index_col=0)
-        
+
         if san_check:
             skip = 2000 if split == 'train' else 1000
             pair_data = pair_data.iloc[::skip]
             pair_data = pair_data.reset_index(drop=True)
-        
+
         self.pair_data = pair_data
-        
+
         self.gtroi_data = pd.read_csv(
             'data/phrase_localization/gt-roi/gt_roi_cord_%s.csv' % split, index_col=0)
         self.img_root = 'data/flickr30k-images/'
@@ -172,21 +195,21 @@ class iParaphraseDataset(chainer.dataset.DatasetMixin):
 
     def __len__(self):
         return len(self.pair_data)
-    
+
     def resample(self):
         print('resample dataset ...\n')
         fname = 'data/phrase_pair_train_wt_pious.csv'
-        
+
         if os.path.exists(fname):
             pair_data = pd.read_csv(fname, index_col=0)
         else:
             pair_data = pd.read_csv('data/phrase_pair_train.csv', index_col=0)
             pair_data = get_phrase_ious(pair_data)
             pair_data.to_csv(fname)
-            
+
         pair_data = downsample_easynegatives(pair_data)
         pair_data = pair_data.reset_index(drop=True)
-            
+
         self.pair_data = pair_data
 
     def get_phrases(self, i):
@@ -296,6 +319,7 @@ class GTJitterDataset(PreCompFeatDataset):
                 'data/phrase_localization/region_feat/jitter_roi-frcnn_asp0.66_off0.4/rois_%s.npy'
                 % split)
 
+
 def get_most_similar(q, targ):
     best_d = np.inf
     for x in targ:
@@ -306,7 +330,7 @@ def get_most_similar(q, targ):
         if best_d == 0:
             break
     return res
-        
+
 
 class DDPNDataset(PreCompFeatDataset):
     def setup(self, split):
@@ -331,9 +355,9 @@ class DDPNDataset(PreCompFeatDataset):
         map_dict = self.vis_indices[str(img_id)]
         try:
             return map_dict[phrase.lower()]
-        except: 
+        except:
             r = get_most_similar(phrase.lower(), map_dict.keys())
-            self.vis_indices[str(img_id)][phrase.lower()] = map_dict[r] # add item
+            self.vis_indices[str(img_id)][phrase.lower()] = map_dict[r]  # add item
             return map_dict[r]
 
     def get_example(self, i):
@@ -373,12 +397,12 @@ class PLCLCDataset(DDPNDataset):
                 json.dump(vis_indices, f)
 
         self.vis_indices = vis_indices
-        
+
     def get_nid(self, img_id, phrase):
         map_dict = self.vis_indices[str(img_id)]
         try:
             return map_dict[phrase]
-        except: 
+        except:
             r = get_most_similar(phrase, map_dict.keys())
-            self.vis_indices[str(img_id)][phrase] = map_dict[r] # add item
+            self.vis_indices[str(img_id)][phrase] = map_dict[r]  # add item
             return map_dict[r]
