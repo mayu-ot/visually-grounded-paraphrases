@@ -1,13 +1,15 @@
 import numpy as np
 import chainer
-from .models.faster_rcnn import FasterRCNNExtractor
-import progressbar
-import json
+from src.models.faster_rcnn import FasterRCNNExtractor
+import pandas as pd
 from imageio import imread
 from chainer.dataset.convert import to_device
+from tqdm import tqdm
 
+chainer.config.cv_resize_backend = "cv2"
 
 def extract_frcnn_feat(df, device):
+    df = pd.read_csv(df)
     model = FasterRCNNExtractor(n_fg_class=20, pretrained_model="voc07")
     chainer.cuda.get_device_from_id(device).use()
     model.to_gpu()
@@ -15,57 +17,33 @@ def extract_frcnn_feat(df, device):
     feat = np.zeros((len(df), 4096)).astype("f")
 
     bbox_iter = get_imagebbox_generator(df)
-    N = df.image.unique().size
 
-    j = 0
+    for items in tqdm(bbox_iter):
+        img, bbox, indices = items
 
-    indices = {}
+        # preprocess image
+        img = img.transpose(2, 0, 1)
+        img = model.prepare(img.astype(np.float32))
+        img = to_device(device, img)
 
-    with progressbar.ProgressBar(max_value=N) as bar:
+        bbox = to_device(device, bbox.astype(np.float32))
+        bbox_indices = model.xp.zeros((len(bbox),)).astype("i")
 
-        for i, items in enumerate(bbox_iter):
-            img, bbox, phrase, name = items
+        with chainer.no_backprop_mode(), chainer.using_config("train", False):
+            y = model.extract(img[None, :], bbox, bbox_indices)
 
-            # preprocess image
-            img = img.transpose(2, 0, 1)
-            img = model.prepare(img.astype(np.float32))
-            img = to_device(device, img)
+        y.to_cpu()
+        feat[indices] = y.data[:]
 
-            bbox = to_device(device, bbox.astype(np.float32))
-            bbox_indices = model.xp.zeros((len(bbox),)).astype("i")
-
-            with chainer.no_backprop_mode(), chainer.using_config("train", False):
-                y = model.extract(img[None, :], bbox, bbox_indices)
-
-            y.to_cpu()
-            n = len(y)
-            feat[j : j + n, :] = y.data[:]
-            indices[str(name)] = {k: v for k, v in zip(phrase, range(j, j + n))}
-            j += n
-
-            bar.update(i)
-
-    return feat, indices
-
-
-def get_alignment(bbox_data):
-    align = {}
-
-    for i in range(len(bbox_data)):
-        phr = bbox_data.get_phrase(i)
-        image = bbox_data.get_image_id(i)
-        align.setdefault(str(image), {}).update({phr: i})
-
-    return align
-
+    return feat
 
 def get_imagebbox_generator(df):
     grouped = df.groupby(["image"])
     for name, group in grouped:
-        im = imread("data/flickr30k-images/%s.jpg" % name)
+        im = imread(f"data/raw/flickr30k-images/{name}.jpg")
         bbox = group[["ymin", "xmin", "ymax", "xmax"]].values
-        phrase = group.phrase
-        yield im, bbox, phrase, name
+        indices = group.index
+        yield im, bbox, indices
 
 
 if __name__ == "__main__":

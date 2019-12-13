@@ -15,6 +15,8 @@ from gensim.parsing.preprocessing import (
     strip_numeric,
 )
 import numpy as np
+from tqdm import tqdm
+from extract_visual_feature import extract_frcnn_feat
 
 
 # @click.command()
@@ -28,15 +30,46 @@ def main():
     logger.info("making final data set from raw data")
 
     # prepare_word_embedding()
+#     build_dataset()
+    extract_visual_feature()
 
-    get_bbox_file("data/raw/ddpn_train.csv", "data/interim/ddpn_bbox_train.csv")
-    get_bbox_file("data/raw/ddpn_val.csv", "data/interim/ddpn_bbox_val.csv")
-    get_bbox_file("data/raw/ddpn_test.csv", "data/interim/ddpn_bbox_test.csv")
+def search(df_v, p1, p2):
+    idx1 = df_v.index[df_v["phrase"] == p1][0]
+    idx2 = df_v.index[df_v["phrase"] == p2][0]
+    return idx1, idx2
+    
+def build_dataset():
 
-    get_bbox_file("data/raw/plclc_train.csv", "data/interim/plclc_bbox_train.csv")
-    get_bbox_file("data/raw/plclc_val.csv", "data/interim/plclc_bbox_val.csv")
-    get_bbox_file("data/raw/plclc_test.csv", "data/interim/plclc_bbox_test.csv")
+    for split in ['train']:
 
+        bbox_df = pd.read_csv(f'data/raw/ddpn_{split}.csv')
+        pair_df = pd.read_csv(f'data/raw/{split}.csv')
+        bbox_df = bbox_df[['image', 'phrase']]
+        pair_df = pair_df[['image', 'original_phrase1', 'original_phrase2', 'ytrue']]
+
+        out_df = []
+
+        all_imgs = pair_df["image"].unique()
+        for im_id in tqdm(all_imgs):
+            df_q = pair_df[pair_df["image"] == im_id].copy()
+            df_v = bbox_df[bbox_df["image"] == im_id]
+
+            args = [(df_v, p1, p2) for _, p1, p2, _ in df_q.itertuples(index=False)]
+            
+            res = [search(*x) for x in args]
+
+            df_q['visfeat_idx1'] = [x for x, _ in res]
+            df_q['visfeat_idx2'] = [x for _, x in res]
+
+            out_df.append(df_q)
+
+        out_df = pd.concat(out_df)
+        out_df.to_csv(f'data/processed/ddpn/{split}.csv')
+
+def extract_visual_feature():
+    for split in ['val', 'test', 'train']:
+        feat = extract_frcnn_feat(f'data/raw/ddpn_{split}.csv', 0)
+        np.save(f"data/processed/ddpn/feat_{split}", feat)
 
 def prepare_word_embedding():
     """Construct vocabulary file and word embedding file.
