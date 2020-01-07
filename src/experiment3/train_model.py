@@ -21,7 +21,9 @@ def resample_data(trainer):
     trainer.updater._iterators['main'].dataset.downsample()
 
 
-def train(san_check=False,
+def train(
+          method,
+          san_check=False,
           epoch=5,
           lr=0.001,
           b_size=500,
@@ -38,8 +40,8 @@ def train(san_check=False,
     print('output to', saveto)
     print('setup dataset...')
 
-    train = Dataset('train', san_check=san_check)
-    val = Dataset('val', san_check=san_check)
+    train = Dataset(method, 'train', san_check=san_check)
+    val = Dataset(method, 'val', san_check=san_check)
     
 
     train_iter = SerialIterator(train, b_size)
@@ -110,6 +112,8 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(
         description='training script for a paraphrase classifier')
+    parser.add_argument('localization_method', type=str,
+                       help='ddpn or plclc')
     parser.add_argument(
         '--lr', '-lr', type=float, default=0.01, help='learning rate <float>')
     parser.add_argument(
@@ -133,6 +137,7 @@ def main():
     args_dic = vars(args)
 
     train(
+        method=args_dic['localization_method'],
         san_check=args_dic['san_check'],
         epoch=args_dic['epoch'],
         lr=args_dic['lr'],

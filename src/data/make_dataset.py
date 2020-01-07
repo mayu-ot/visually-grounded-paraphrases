@@ -13,16 +13,17 @@ from gensim.parsing.preprocessing import (
     strip_multiple_whitespaces,
     remove_stopwords,
     strip_numeric,
+    strip_non_alphanum
 )
+from nltk import edit_distance
 import numpy as np
 from tqdm import tqdm
 from extract_visual_feature import extract_frcnn_feat
 
 
-# @click.command()
-# @click.argument('input_filepath', type=click.Path(exists=True))
-# @click.argument('output_filepath', type=click.Path())
-def main():
+@click.command()
+@click.argument('localization_method', type=str)
+def main(localization_method):
     """ Runs data processing scripts to turn raw data from (../raw) into
         cleaned data ready to be analyzed (saved in ../processed).
     """
@@ -30,21 +31,67 @@ def main():
     logger.info("making final data set from raw data")
 
     # prepare_word_embedding()
-#     build_dataset()
-    extract_visual_feature()
+#     build_dataset(localization_method)
+    extract_visual_feature(localization_method)
 
 def search(df_v, p1, p2):
-    idx1 = df_v.index[df_v["phrase"] == p1][0]
-    idx2 = df_v.index[df_v["phrase"] == p2][0]
-    return idx1, idx2
+    idx1 = df_v.index[df_v["phrase"] == p1]
+    idx2 = df_v.index[df_v["phrase"] == p2]
     
-def build_dataset():
+    if len(idx1)==0:
+        i = np.argmin([edit_distance(p1, x) for x in df_v['phrase']])
+        idx1 = [df_v.index[i]]
+        
+    if len(idx2)==0:
+        i = np.argmin([edit_distance(p2, x) for x in df_v['phrase']])
+        idx2 = [df_v.index[i]]
+        
+    assert len(idx1) > 0, f"{df_v.image.values[0]} '{p1}' not found"
+    assert len(idx2) > 0, f"{df_v.image.values[0]} '{p2}' not found"
 
-    for split in ['train']:
+    return idx1[0], idx2[0]
 
-        bbox_df = pd.read_csv(f'data/raw/ddpn_{split}.csv')
+def preprocess_plclc_data(bbox_df, interim_file):
+    bbox_df = bbox_df.drop_duplicates(['image', 'org_phrase'])
+    bbox_df.index = range(len(bbox_df))
+    bbox_df = bbox_df.rename(columns={'org_phrase': 'phrase'})
+    bbox_df.to_csv(interim_file)
+    
+    bbox_df = bbox_df[['image', 'phrase']]
+    return bbox_df
+    
+    
+def build_dataset(localization_method='ddpn'):
+    logger = logging.getLogger(__name__)
+    
+    for split in ['val', 'test', 'train']:
+        logger.info(f"Compile annotations: {localization_method} -- {split}")
         pair_df = pd.read_csv(f'data/raw/{split}.csv')
-        bbox_df = bbox_df[['image', 'phrase']]
+        
+        if localization_method == 'ddpn':  
+            bbox_df = pd.read_csv(f'data/raw/{localization_method}_{split}.csv')
+            bbox_df = bbox_df[['image', 'phrase']]
+        elif localization_method == 'plclc':
+            bbox_df = pd.read_csv(f'data/raw/{localization_method}_{split}.csv', index_col=0)
+            bbox_df = preprocess_plclc_data(bbox_df, interim_file=f'data/interim/plclc_{split}_top1.csv')
+            
+            CUSTOM_FILTERS = [
+                lambda x: x.lower(),
+                strip_punctuation,
+                strip_non_alphanum,
+                strip_multiple_whitespaces,
+            ]
+            
+            org_phrases = pair_df['original_phrase1'].copy(), pair_df['original_phrase2'].copy(),
+            
+            for f in CUSTOM_FILTERS:
+                bbox_df['phrase'] = bbox_df['phrase'].transform(f)
+                pair_df['original_phrase1'] = pair_df['original_phrase1'].transform(f)
+                pair_df['original_phrase2'] = pair_df['original_phrase2'].transform(f)
+    
+        else:
+            raise RuntimeError('specify valid localization methods: ddpn or plclc')
+
         pair_df = pair_df[['image', 'original_phrase1', 'original_phrase2', 'ytrue']]
 
         out_df = []
@@ -64,12 +111,28 @@ def build_dataset():
             out_df.append(df_q)
 
         out_df = pd.concat(out_df)
-        out_df.to_csv(f'data/processed/ddpn/{split}.csv')
+        
+        if localization_method == 'plclc':
+            out_df['original_phrase1'] = org_phrases[0]
+            out_df['original_phrase2'] = org_phrases[1]
+            
+        out_df.to_csv(f'data/processed/{localization_method}/{split}.csv')
 
-def extract_visual_feature():
+def extract_visual_feature(localization_method=None):
+    logger = logging.getLogger(__name__)
+        
     for split in ['val', 'test', 'train']:
-        feat = extract_frcnn_feat(f'data/raw/ddpn_{split}.csv', 0)
-        np.save(f"data/processed/ddpn/feat_{split}", feat)
+        logger.info(f"Extracting visual features: {localization_method} -- {split}")
+
+        if localization_method == 'ddpn':
+            bbox_file = f'data/raw/ddpn_{split}.csv'
+        elif localization_method == 'plclc':
+            bbox_file = f'data/interim/plclc_{split}_top1.csv'
+        else:
+            raise RuntimeError
+
+        feat = extract_frcnn_feat(bbox_file, 0)
+        np.save(f"data/processed/{localization_method}/feat_{split}", feat)
 
 def prepare_word_embedding():
     """Construct vocabulary file and word embedding file.
@@ -134,7 +197,25 @@ def get_bbox_file(file_name, out_name):
     logging.info("writing: %s" % out_name)
     df.to_csv(out_name)
 
+def write_stopwords():
+    dfs = [pd.read_csv(f"data/raw/{split}.csv") for split in ["train", "val", "test"]]
+    df = pd.concat(dfs, axis=0)
 
+    trimmed = []
+    for _, row in df.iterrows():
+        org_phrase1 = row["original_phrase1"]
+        org_phrase2 = row["original_phrase2"]
+        processed_phrase1 = row["phrase1"]
+        processed_phrase2 = row["phrase2"]
+        trimmed += list(set(org_phrase1.split()) - set(processed_phrase1.split("+")))
+        trimmed += list(set(org_phrase2.split()) - set(processed_phrase2.split("+")))
+
+    trimmed = set(trimmed)
+    
+    with open("data/interim/stopwords", "w") as f:
+        for item in trimmed:
+            f.write(item+"\n")
+        
 if __name__ == "__main__":
     log_fmt = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     logging.basicConfig(level=logging.INFO, format=log_fmt)

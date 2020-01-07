@@ -25,7 +25,7 @@ def group_phrases(A):
         label[g] = i
     return label
 
-def eval(df, clutter=.5, damping=.5):
+def eval_ari(df, clutter=.5, damping=.5):
     ad_rands = []
 
     for img_id in tqdm(df.image.unique()):
@@ -38,7 +38,12 @@ def eval(df, clutter=.5, damping=.5):
         for i_1, i_2 in combinations(range(n), 2):
             p1 = phrases[i_1]
             p2 = phrases[i_2]
+            
             rows = sub_df[(sub_df.phrase1==p1)&(sub_df.phrase2==p2)]
+            
+            if len(rows)==0:
+                rows = sub_df[(sub_df.phrase1==p2)&(sub_df.phrase2==p1)]
+        
             s = rows.pred.values[0] if len(rows) else 0
             t = rows.label.values[0] if len(rows) else 0
             scores.append(s)
@@ -47,7 +52,7 @@ def eval(df, clutter=.5, damping=.5):
         A = squareform(scores)
         T = squareform(t_label) + np.eye(n)
 
-        pref = np.percentile(scores, clutter)
+        pref = np.percentile(A, clutter)
         af = AffinityPropagation(preference=pref, affinity='precomputed',damping=damping)
         label = af.fit_predict(A)
         gt_label = group_phrases(T)
@@ -60,8 +65,10 @@ if __name__=='__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('pred_file', type=str)
+    parser.add_argument('--clutter', type=float, default=0.5)
+    parser.add_argument('--damping', type=float, default=0.5)
     args = parser.parse_args()
     
     df = pd.read_csv(args.pred_file)
-    score = eval(df)
+    score = eval_ari(df, args.clutter, args.damping)
     print(score)

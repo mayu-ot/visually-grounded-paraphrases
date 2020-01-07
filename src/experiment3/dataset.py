@@ -22,9 +22,9 @@ def preprocess_phrase(texts):
     return processed
 
 class Dataset(DatasetMixin):
-    def __init__(self, split, san_check=False):
+    def __init__(self, method, split, san_check=False):
         names = ['image', 'phrase1', 'phrase2', 'label', 'v_idx1', 'v_idx2']
-        df = pd.read_csv(f"data/processed/ddpn/{split}.csv",
+        df = pd.read_csv(f"data/processed/{method}/{split}.csv",
                          names=names,
                          sep=',',
                          header=0)
@@ -39,7 +39,7 @@ class Dataset(DatasetMixin):
         self.data = [x for x in zip(text1, text2, df['v_idx1'], df['v_idx2'], df['label'])]
         
         
-        self.vis_feat = np.load(f"data/processed/ddpn/feat_{split}.npy").astype('f')
+        self.vis_feat = np.load(f"data/processed/{method}/feat_{split}.npy").astype('f')
         self.dct = Dictionary.load_from_text('data/processed/dictionary.txt')
         if split=='train':
             self.downsample()

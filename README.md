@@ -79,7 +79,7 @@ export CFLAGS=-I/home/mayu-ot/.cudnn/active/cuda/include
 export CPATH=/home/mayu-ot/.cudnn/active/cuda/include:$CPATH
 export LDFLAGS=-L/home/mayu-ot/.cudnn/active/cuda/lib64
 export LD_LIBRARY_PATH=/home/mayu-ot/.cudnn/active/cuda/lib64:$LD_LIBRARY_PATH
-export CUDA_PATH=/path/to/cuda
+export CUDA_PATH=/usr/local/cuda-10.1
 ```
 
 2. Install dependencies
