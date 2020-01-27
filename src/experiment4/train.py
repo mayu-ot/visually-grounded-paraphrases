@@ -13,9 +13,12 @@ from chainer import training
 from chainer.training import extensions
 import os
 from chainer.iterators import SerialIterator
-import json
 from datetime import datetime as dt
 from optuna.integration import ChainerPruningExtension
+import tempfile
+import joblib
+import json
+import neptune
 
 
 def custom_converter(batch, device=None):
@@ -37,7 +40,7 @@ def construct_model(gate_mode: str, h_size: Tuple[int, int] = (1000, 300)):
     return model
 
 
-def get_dataset(splits: List[str], subset_size):
+def get_dataset(splits: List[str], subset_size: float = 1.0):
     feat_type: str = "ddpn"
     data = []
     for s in splits:
@@ -165,53 +168,68 @@ def train(
     return result_info
 
 
-def main():
-    import argparse
+def load_study_log_from_neptune(exp_id: str) -> dict:
+    project = neptune.init(project_qualified_name="mayu-ot/VGP")
+    neptune_exp = project.get_experiments(exp_id)[0]
+    with tempfile.TemporaryDirectory() as d:
+        neptune_exp.download_artifact("study.pkl", destination_dir=d)
+        file_name = os.path.join(d, "study.pkl")
+        study = joblib.load(open(file_name, "rb"))
+    return study.best_params
 
-    parser = argparse.ArgumentParser(
-        description="training script for a paraphrase classifier"
-    )
-    parser.add_argument(
-        "gate_mode",
-        choices=["none", "language_gate", "visual_gate", "multimodal_gate"],
+
+def train_model_with_study_log(args):
+    exp_id: "str" = args.exp_id
+
+    project = neptune.init(project_qualified_name="mayu-ot/VGP")
+    neptune_exp = project.get_experiments(exp_id)[0]
+    exp_name = neptune_exp.name.split("_")
+    gate_mode = "_".join(exp_name[2:])
+
+    params: dict = load_study_log_from_neptune(exp_id)
+
+    if params["weight_decay_on"]:
+        weight_decay: Optional[float] = params["weight_decay"]
+    else:
+        weight_decay = None
+
+    h_size_0 = params["h_size_0"]
+    h_size_1 = params["h_size_1"]
+
+    model = construct_model(gate_mode, (h_size_0, h_size_1))
+
+    train_dataset, val_dataset = get_dataset(["train", "val"])
+
+    down_sampler = DownSampler(
+        train_dataset.indices_positive, train_dataset.indices_negative
     )
 
-    parser.add_argument(
-        "--lr", "-lr", type=float, default=0.01, help="learning rate <float>"
-    )
-    parser.add_argument(
-        "--device", "-d", type=int, default=None, help="gpu device id <int>"
+    b_size: int = 2000
+
+    train_iterator = SerialIterator(
+        train_dataset, b_size, shuffle=None, order_sampler=down_sampler
     )
 
-    parser.add_argument(
-        "--b_size",
-        "-b",
-        type=int,
-        default=500,
-        help="minibatch size <int> (default 500)",
-    )
-    parser.add_argument(
-        "--epoch", "-e", type=int, default=5, help="maximum epoch <int>"
-    )
-    parser.add_argument(
-        "--san_check", "-sc", action="store_true", help="sanity check mode"
-    )
-    parser.add_argument(
-        "--w_decay",
-        "-wd",
-        type=float,
-        default=None,
-        help="weight decay <float>",
-    )
-    parser.add_argument(
-        "--train_percent",
-        type=float,
-        default=1.0,
-        help="How many date will be used for training",
-    )
-    parser.add_argument("--out_pref", type=str, default="./checkpoint/")
-    args = parser.parse_args()
+    val_iterator = SerialIterator(val_dataset, 2 * b_size, repeat=False)
 
+    result_info = train(
+        model,
+        train_iterator,
+        val_iterator,
+        5,
+        args.device,
+        params["lr"],
+        weight_decay,
+        out_pref=args.out_pref,
+        checkpoint_on=True,
+        data_parallel=False,
+    )
+
+    param_file = os.path.join(result_info["log_dir"], "config.json")
+    json.dump(params, open(param_file, "w"))
+
+
+def manual_train(args):
     train_dataset, val_dataset = get_dataset(["train", "val"])
 
     down_sampler = DownSampler(
@@ -241,6 +259,65 @@ def main():
         args.w_decay,
         args.out_pref,
     )
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="training script for a paraphrase classifier"
+    )
+    parser.add_argument(
+        "--device", "-d", type=int, default=None, help="gpu device id <int>"
+    )
+    parser.add_argument(
+        "--epoch", "-e", type=int, default=5, help="maximum epoch <int>"
+    )
+    parser.add_argument(
+        "--san_check", "-sc", action="store_true", help="sanity check mode"
+    )
+    parser.add_argument(
+        "--train_percent",
+        type=float,
+        default=1.0,
+        help="How many date will be used for training",
+    )
+    parser.add_argument("--out_pref", type=str, default="./checkpoint/")
+
+    subparsers = parser.add_subparsers(help="sub-commands")
+
+    use_nept_parser = subparsers.add_parser(
+        "neptune_log", help="download study log on neptune"
+    )
+    use_nept_parser.add_argument("exp_id", type=str)
+    use_nept_parser.set_defaults(func=train_model_with_study_log)
+
+    manual_parser = subparsers.add_parser("manual", help="manual settings")
+    manual_parser.add_argument(
+        "gate_mode",
+        choices=["none", "language_gate", "visual_gate", "multimodal_gate"],
+    )
+    manual_parser.add_argument(
+        "--lr", "-lr", type=float, default=0.01, help="learning rate <float>"
+    )
+    manual_parser.add_argument(
+        "--b_size",
+        "-b",
+        type=int,
+        default=500,
+        help="minibatch size <int> (default 500)",
+    )
+    manual_parser.add_argument(
+        "--w_decay",
+        "-wd",
+        type=float,
+        default=None,
+        help="weight decay <float>",
+    )
+    manual_parser.set_defaults(func=manual_train)
+    args = parser.parse_args()
+
+    args.func(args)
 
 
 if __name__ == "__main__":
