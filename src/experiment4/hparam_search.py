@@ -6,7 +6,11 @@ from src.data_loader.multimodal_dataloader import DownSampler
 from chainer.iterators import SerialIterator
 import neptune
 import neptunecontrib.monitoring.optuna as opt_utils
-import pdb
+import socket
+import getpass
+import os
+import sys
+from optuna.integration import ChainerPruningExtension
 
 
 def objective(
@@ -33,6 +37,10 @@ def objective(
     train_iterator.reset()
     val_iterator.reset()
 
+    pruning_extension = ChainerPruningExtension(
+        trial, "validation/main/loss", (1, "epoch")
+    )
+
     result_info = train(
         model,
         train_iterator,
@@ -43,6 +51,7 @@ def objective(
         weight_decay,
         out_pref="models/neurocomp/hparam_search/",
         checkpoint_on=False,
+        my_extensions=[pruning_extension],
         data_parallel=False,
     )
 
@@ -61,7 +70,11 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("gate_mode", type=str)
+    parser.add_argument(
+        "gate_mode",
+        type=str,
+        choices=["none", "visual_gate", "language_gate", "multimodal_gate"],
+    )
     parser.add_argument("--b_size", type=int, default=300)
     parser.add_argument("--n_trials", type=int, default=100)
     parser.add_argument("--device", type=int, default=0)
@@ -83,7 +96,13 @@ def main():
 
     neptune.init(project_qualified_name="mayu-ot/VGP")
     neptune_exp = neptune.create_experiment(
-        name=f"hparam_saerch_{args.gate_mode}"
+        name=f"hparam_saerch_{args.gate_mode}",
+        properties={
+            "user": getpass.getuser(),
+            "host": socket.gethostname(),
+            "wd": os.getcwd(),
+            "cmd": " ".join(sys.argv),
+        },
     )
 
     monitor = opt_utils.NeptuneMonitor(neptune_exp)
