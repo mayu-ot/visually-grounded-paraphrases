@@ -29,8 +29,10 @@ def objective(
     else:
         weight_decay = None
 
-    h_size_0 = trial.suggest_int("h_size_0", 100, 3000)
-    h_size_1 = trial.suggest_int("h_size_1", 100, 3000)
+    # h_size_0 = trial.suggest_int("h_size_0", 100, 3000)
+    # h_size_1 = trial.suggest_int("h_size_1", 100, 3000)
+    h_size_0 = 1000
+    h_size_1 = 300
 
     model = construct_model(gate_mode, (h_size_0, h_size_1))
 

@@ -1,8 +1,9 @@
 import pdb
 from typing import List, Optional, Tuple, Callable
-from src.models.models import iParaphraseNet
+from src.models.models import iParaphraseNet, iParaphraseIoUNet
 from src.data_loader.multimodal_dataloader import (
     MultiModalDataLoader,
+    MultiModalIoUDataLoader,
     DownSampler,
 )
 from chainer.dataset.convert import to_device
@@ -12,13 +13,47 @@ import chainer
 from chainer import training
 from chainer.training import extensions
 import os
-from chainer.iterators import SerialIterator
+from chainer.iterators import SerialIterator, MultiprocessIterator
 from datetime import datetime as dt
 from optuna.integration import ChainerPruningExtension
 import tempfile
 import joblib
 import json
 import neptune
+
+
+def custom_iou_converter(batch, device=None):
+    phrase_a = [to_device(device, np.asarray(b[0], np.int32)) for b in batch]
+    phrase_b = [to_device(device, np.asarray(b[1], np.int32)) for b in batch]
+
+    visfeat_a = np.vstack([b[2] for b in batch])
+    visfeat_a = to_device(device, visfeat_a)
+    visfeat_b = np.vstack([b[3] for b in batch])
+    visfeat_b = to_device(device, visfeat_b)
+
+    ious = np.asarray([b[4] for b in batch], np.float32)[:, None]
+    ious = to_device(device, ious)
+
+    label = np.asarray([b[5] for b in batch], np.int32)
+    label = to_device(device, label)
+    return phrase_a, phrase_b, visfeat_a, visfeat_b, ious, label
+
+    # n_inputs = len(batch[0])
+    # outputs = []
+    # for i in range(n_inputs):
+    #     if isinstance(batch[0][i], list):
+    #         x = [to_device(device, np.asarray(b[i], np.int32)) for b in batch]
+    #     elif isinstance(batch[0][i], np.ndarray):
+    #         x = np.vstack([b[i] for b in batch])
+    #         x = to_device(device, x)
+    #     elif isinstance(batch[0][i], bool):
+    #         x = np.asarray([b[4] for b in batch], np.int32)
+    #         x = to_device(device, x)
+    #     elif isinstance(batch[0][i], float):
+    #         x = np.asarray([b[4] for b in batch], np.float32)
+    #         x = to_device(device, x)
+    #     outputs.append(x)
+    # return
 
 
 def custom_converter(batch, device=None):
@@ -35,17 +70,32 @@ def custom_converter(batch, device=None):
     return phrase_a, phrase_b, visfeat_a, visfeat_b, label
 
 
-def construct_model(gate_mode: str, h_size: Tuple[int, int] = (1000, 300)):
-    model = iParaphraseNet(gate_mode, h_size)
+def construct_model(
+    gate_mode: str,
+    h_size: Tuple[int, int] = (1000, 300),
+    use_iou: bool = False,
+):
+    if use_iou:
+        model = iParaphraseIoUNet(gate_mode, h_size)
+    else:
+        model = iParaphraseNet(gate_mode, h_size)
     return model
 
 
-def get_dataset(splits: List[str], subset_size: float = 1.0):
-    feat_type: str = "ddpn"
+def get_dataset(
+    splits: List[str], subset_size: float = 1.0, use_iou: bool = False
+):
+    feat_type = "ddpn"
     data = []
     for s in splits:
         dataset_file = f"data/processed/{feat_type}/{s}.csv"
-        d = MultiModalDataLoader(dataset_file, s, subset_size, feat_type)
+
+        if use_iou:
+            d = MultiModalIoUDataLoader(
+                dataset_file, s, subset_size, feat_type
+            )
+        else:
+            d = MultiModalDataLoader(dataset_file, s, subset_size, feat_type)
         data.append(d)
 
     return data
@@ -70,6 +120,7 @@ def train(
     checkpoint_on: bool = True,
     my_extensions: Optional[List[Callable]] = None,
     data_parallel: bool = True,
+    use_iou: bool = False,
 ) -> dict:
 
     saveto = prepare_logging_directory(out_pref)
@@ -86,25 +137,35 @@ def train(
     if w_decay is not None:
         opt.add_hook(chainer.optimizer.WeightDecay(w_decay), "hook_dec")
 
+    if use_iou:
+        converter = custom_iou_converter
+    else:
+        converter = custom_converter
+
     if data_parallel:
-        updater = training.updaters.ParallelUpdater(
+        updater = training.updaters.MultiprocessParallelUpdater(
             train_iterator,
             opt,
-            converter=custom_converter,
+            converter=converter,
             devices={"main": 0, "second": 1, "third": 2},
         )
     else:
         updater = training.StandardUpdater(
-            train_iterator, opt, converter=custom_converter, device=device0
+            train_iterator, opt, converter=converter, device=device0
         )
+
     trainer = training.Trainer(updater, (epoch, "epoch"), saveto)
+
+    if data_parallel:
+        for name, observer in updater._models.items():
+            trainer.reporter.add_observer(name, observer)
 
     val_interval = (1, "epoch")
     log_interval = (10, "iteration")
 
     trainer.extend(
         extensions.Evaluator(
-            val_iterator, model, converter=custom_converter, device=device
+            val_iterator, model, converter=converter, device=device
         ),
         trigger=val_interval,
     )
@@ -183,8 +244,6 @@ def train_model_with_study_log(args):
 
     project = neptune.init(project_qualified_name="mayu-ot/VGP")
     neptune_exp = project.get_experiments(exp_id)[0]
-    exp_name = neptune_exp.name.split("_")
-    gate_mode = "_".join(exp_name[2:])
 
     params: dict = load_study_log_from_neptune(exp_id)
 
@@ -192,6 +251,10 @@ def train_model_with_study_log(args):
         weight_decay: Optional[float] = params["weight_decay"]
     else:
         weight_decay = None
+
+    exp_name = neptune_exp.name.split("_")
+    gate_mode = "_".join(exp_name[2:])
+    params["gate_mode"] = gate_mode
 
     h_size_0 = params["h_size_0"]
     h_size_1 = params["h_size_1"]
@@ -204,7 +267,7 @@ def train_model_with_study_log(args):
         train_dataset.indices_positive, train_dataset.indices_negative
     )
 
-    b_size: int = 2000
+    b_size: int = 1000
 
     train_iterator = SerialIterator(
         train_dataset, b_size, shuffle=None, order_sampler=down_sampler
@@ -230,21 +293,21 @@ def train_model_with_study_log(args):
 
 
 def manual_train(args):
-    train_dataset, val_dataset = get_dataset(["train", "val"])
-
-    down_sampler = DownSampler(
-        train_dataset.indices_positive,
-        train_dataset.indices_negative,
-        args.train_percent,
+    train_dataset, val_dataset = get_dataset(
+        ["train", "val"], subset_size=args.train_percent, use_iou=args.use_iou
     )
 
-    train_iterator = SerialIterator(
+    down_sampler = DownSampler(
+        train_dataset.indices_positive, train_dataset.indices_negative
+    )
+
+    train_iterator = MultiprocessIterator(
         train_dataset, args.b_size, shuffle=None, order_sampler=down_sampler
     )
 
-    val_iterator = SerialIterator(val_dataset, 2 * args.b_size, repeat=False)
+    val_iterator = MultiprocessIterator(val_dataset, 2 * args.b_size, repeat=False)
 
-    model = construct_model(args.gate_mode)
+    model = construct_model(args.gate_mode, use_iou=args.use_iou)
     if args.device is not None:
         chainer.cuda.get_device_from_id(args.device).use()
         model.to_gpu()
@@ -258,6 +321,7 @@ def manual_train(args):
         args.lr,
         args.w_decay,
         args.out_pref,
+        use_iou=args.use_iou,
     )
 
 
@@ -296,6 +360,9 @@ def main():
     manual_parser.add_argument(
         "gate_mode",
         choices=["none", "language_gate", "visual_gate", "multimodal_gate"],
+    )
+    manual_parser.add_argument(
+        "--use_iou", action="store_true", help="sanity check mode"
     )
     manual_parser.add_argument(
         "--lr", "-lr", type=float, default=0.01, help="learning rate <float>"

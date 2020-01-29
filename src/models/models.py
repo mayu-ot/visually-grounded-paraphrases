@@ -87,11 +87,13 @@ class GatedClassifierNet(ClassifierNet):
         with self.init_scope():
             self.gate = self.gate_net
 
-    def __call__(self, x_p, x_v):
+    def __call__(self, x_p, x_v, ious=None):
         g_l, g_v = self.gate(x_p, x_v)
         h_l = F.tanh(self.bn_l0(self.l_phr(x_p)))
         h_v = F.tanh(self.bn_v0(self.l_img(x_v)))
         h = g_l * h_l + g_v * h_v
+        if ious is not None:
+            h = F.hstack([h, ious])
         h = F.relu(self.bn_1(self.l_1(h)))
         h = self.cls(h)
         h = F.flatten(h)
@@ -178,68 +180,30 @@ class iParaphraseNet(chainer.Chain):
         return loss
 
 
-# class NaiveFuse_iParaphraseNet(Switching_iParaphraseNet):
-#     def __init__(self):
-#         super(NaiveFuse_iParaphraseNet, self).__init__()
+class iParaphraseIoUNet(iParaphraseNet):
+    def __call__(self, phr_a, phr_b, vis_a, vis_b, ious, l):
+        emb_a = self.phrase_emb(phr_a)
+        emb_b = self.phrase_emb(phr_b)
+        h_p = self.phrase_net(emb_a, emb_b)
+        h_v = self.vision_net(vis_a, vis_b)
 
-#     def setup_layers(self, _):
-#         with self.init_scope():
-#             self.phrase_net = PhraseNet(1000)
-#             self.vision_net = ImgNet(1000)
-#             self.classifier = ClassifierNet(300)
+        h = self.classifier(h_p, h_v, ious)
 
+        if chainer.config.train is False:
+            self.y = F.sigmoid(h)
+            self.t = l
 
-# class BaseNet(chainer.Chain):
-#     def __init__(self, h_size1, h_size2):
-#         super(BaseNet, self).__init__()
-#         w = initializers.HeNormal()
-#         with self.init_scope():
-#             self.l_0 = L.Linear(None, h_size1, initialW=w, nobias=True)
-#             self.l_1 = L.Linear(None, h_size2, initialW=w, nobias=True)
-#             self.bn_0 = L.BatchNormalization(h_size1)
-#             self.bn_1 = L.BatchNormalization(h_size2)
-#             self.cls = L.Linear(None, 1)
+        loss = F.sigmoid_cross_entropy(h, l)
 
-#     def __call__(self, x0, x1):
-#         h0 = F.relu(self.bn_0(self.l_0(x0)))
-#         h1 = F.relu(self.bn_0(self.l_0(x1)))
+        precision, recall, fbeta = binary_classification_summary(h, l)
+        reporter.report(
+            {
+                "loss": loss,
+                "precision": precision,
+                "recall": recall,
+                "f1": fbeta,
+            },
+            self,
+        )
 
-#         h = F.relu(self.bn_1(self.l_1(h0) + self.l_1(h1)))
-#         h = self.cls(h)
-#         return h
-
-
-# class LateSwitching_iParaphraseNet(chainer.Chain):
-#     def __init__(self):
-#         super(LateSwitching_iParaphraseNet, self).__init__()
-#         with self.init_scope():
-#             self.language_net = BaseNet(1000, 300)
-#             self.vision_net = BaseNet(1000, 300)
-#             self.gate_net = MultiModalGateNet(1)
-
-#     def __call__(self, phr_1, phr_2, vis_1, vis_2, l):
-#         y_l = self.language_net(phr_1, phr_2)
-#         y_v = self.vision_net(vis_1, vis_2)
-
-#         g_l, g_v = self.gate_net(phr_1, phr_2, vis_1, vis_2)
-#         y = g_l * y_l + g_v * y_v
-#         y = F.flatten(y)
-
-#         if chainer.config.train == False:
-#             self.y = F.sigmoid(y)
-#             self.t = l
-
-#         loss = F.sigmoid_cross_entropy(y, l)
-
-#         precision, recall, fbeta = binary_classification_summary(y, l)
-#         reporter.report(
-#             {
-#                 "loss": loss,
-#                 "precision": precision,
-#                 "recall": recall,
-#                 "f1": fbeta,
-#             },
-#             self,
-#         )
-
-#         return loss
+        return loss
