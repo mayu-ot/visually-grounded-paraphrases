@@ -1,0 +1,23 @@
+MODEL:
+  NAME: "phrase-only"
+  SUB_NAME: "wea"
+  H_SIZE: [1000, 300]
+  USE_IOU: False
+DATASET:
+  NAME: "phrase-only"
+  FEAT_TYPE: ""
+  TRAIN_SIZE: 0.1
+TRAIN:
+  BATCH_SIZE: 3000
+  LR: 0.01
+  EPOCH: 5
+  DEVICE: 0
+  N_PARALLEL: 4
+LOG:
+  OUTDIR: "models/phrase-only/"
+  LOG_FILE: "log.json"
+  NEPTUNE: False
+TEST:
+  CHECKPOINT: "models/phrase-only/model"
+  OUTDIR: "models/phrase-only/"
+  DEVICE: 0

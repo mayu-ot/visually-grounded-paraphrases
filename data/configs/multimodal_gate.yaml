@@ -1,0 +1,23 @@
+MODEL:
+  NAME: "multimodal"
+  SUB_NAME: "multimodal_gate"
+  H_SIZE: [1000, 300]
+  USE_IOU: False
+DATASET:
+  NAME: "multimodal"
+  FEAT_TYPE: "ddpn"
+  TRAIN_SIZE: 0.1
+TRAIN:
+  BATCH_SIZE: 3000
+  LR: 0.01
+  EPOCH: 5
+  DEVICE: 0
+  N_PARALLEL: 4
+LOG:
+  OUTDIR: "models/multimodal_gate/"
+  LOG_FILE: "log.json"
+  NEPTUNE: False
+TEST:
+  CHECKPOINT: "models/multimodal_gate/model"
+  OUTDIR: "models/multimodal_gate/"
+  DEVICE: 0
