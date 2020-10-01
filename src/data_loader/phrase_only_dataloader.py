@@ -1,3 +1,4 @@
+from typing import List
 import numpy as np
 from chainer.dataset import DatasetMixin
 import pandas as pd
@@ -37,8 +38,12 @@ class PhraseOnlyDataLoader(DatasetMixin):
             strip_multiple_whitespaces,
             strip_numeric,
         ]
-        phrase_a = [preprocess_string(x, CUSTOM_FILTERS) for x in df.values[:, 1]]
-        phrase_b = [preprocess_string(x, CUSTOM_FILTERS) for x in df.values[:, 2]]
+        phrase_a = [
+            preprocess_string(x, CUSTOM_FILTERS) for x in df.values[:, 1]
+        ]
+        phrase_b = [
+            preprocess_string(x, CUSTOM_FILTERS) for x in df.values[:, 2]
+        ]
         self.phrase_a = phrase_a
         self.phrase_b = phrase_b
 
@@ -56,6 +61,14 @@ class PhraseOnlyDataLoader(DatasetMixin):
 
     def __len__(self):
         return len(self.label)
+
+    @property
+    def indices_positive(self) -> List[int]:
+        return [i for i, l in enumerate(self.label) if l]
+
+    @property
+    def indices_negative(self) -> List[int]:
+        return [i for i, l in enumerate(self.label) if not l]
 
     def get_example(self, i):
 

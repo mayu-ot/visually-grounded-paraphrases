@@ -1,28 +1,51 @@
 import pdb
-from typing import List, Optional, Tuple, Callable
-from src.models.models import iParaphraseNet, iParaphraseIoUNet
-from src.data_loader.multimodal_dataloader import (
-    MultiModalDataLoader,
-    MultiModalIoUDataLoader,
-    DownSampler,
-)
-from chainer.dataset.convert import to_device
+from typing import Dict, List, Optional, Callable, Union
+from src.models import build_model
+from src.data_loader import build_dataloader, get_converter
 import numpy as np
 
 import chainer
 from chainer import training
 from chainer.training import extensions
 import os
-from chainer.iterators import SerialIterator, MultiprocessIterator
-from datetime import datetime as dt
-from optuna.integration import ChainerPruningExtension
 import tempfile
 import joblib
 import json
+from config import get_cfg_defaults
+from yacs.config import CfgNode
+import click
+import socket
+import getpass
+import sys
 import neptune
 
 
-def custom_iou_converter(batch, device=None):
+def log2neptune(trainer, logfile: str) -> None:
+    filename = os.path.join(trainer.out, logfile)
+    log_info = json.load(open(filename, "r"))
+    log_info = log_info[-1]
+    iteration = log_info["iteration"]
+    for k, v in log_info.items():
+        neptune.log_metric(k, iteration, v)
+
+
+def setup_neptune(cfg) -> None:
+    neptune.init(project_qualified_name="mayu-ot/VGP")
+    neptune.create_experiment(
+        name=f"train {cfg.MODEL.GATE}",
+        properties={
+            "user": getpass.getuser(),
+            "host": socket.gethostname(),
+            "wd": os.getcwd(),
+            "cmd": " ".join(sys.argv),
+        },
+        tags=["train"],
+    )
+    filename = os.path.join(cfg.LOG.OUTDIR, "config.yaml")
+    neptune.log_artifact(filename, "config.yaml")
+
+
+def multimodal_iou_converter(batch, device=None):
     phrase_a = [to_device(device, np.asarray(b[0], np.int32)) for b in batch]
     phrase_b = [to_device(device, np.asarray(b[1], np.int32)) for b in batch]
 
@@ -38,25 +61,8 @@ def custom_iou_converter(batch, device=None):
     label = to_device(device, label)
     return phrase_a, phrase_b, visfeat_a, visfeat_b, ious, label
 
-    # n_inputs = len(batch[0])
-    # outputs = []
-    # for i in range(n_inputs):
-    #     if isinstance(batch[0][i], list):
-    #         x = [to_device(device, np.asarray(b[i], np.int32)) for b in batch]
-    #     elif isinstance(batch[0][i], np.ndarray):
-    #         x = np.vstack([b[i] for b in batch])
-    #         x = to_device(device, x)
-    #     elif isinstance(batch[0][i], bool):
-    #         x = np.asarray([b[4] for b in batch], np.int32)
-    #         x = to_device(device, x)
-    #     elif isinstance(batch[0][i], float):
-    #         x = np.asarray([b[4] for b in batch], np.float32)
-    #         x = to_device(device, x)
-    #     outputs.append(x)
-    # return
 
-
-def custom_converter(batch, device=None):
+def multimodal_converter(batch, device=None):
     phrase_a = [to_device(device, np.asarray(b[0], np.int32)) for b in batch]
     phrase_b = [to_device(device, np.asarray(b[1], np.int32)) for b in batch]
 
@@ -70,102 +76,73 @@ def custom_converter(batch, device=None):
     return phrase_a, phrase_b, visfeat_a, visfeat_b, label
 
 
-def construct_model(
-    gate_mode: str,
-    h_size: Tuple[int, int] = (1000, 300),
-    use_iou: bool = False,
-):
-    if use_iou:
-        model = iParaphraseIoUNet(gate_mode, h_size)
-    else:
-        model = iParaphraseNet(gate_mode, h_size)
-    return model
+def phrase_converter(batch, device):
+    phrase_a = [to_device(device, np.asarray(b[0], np.int32)) for b in batch]
+    phrase_b = [to_device(device, np.asarray(b[1], np.int32)) for b in batch]
+    label = np.asarray([b[2] for b in batch], np.int32)
+    label = to_device(device, label)
+    return phrase_a, phrase_b, label
 
 
-def get_dataset(
-    splits: List[str], subset_size: float = 1.0, use_iou: bool = False
-):
-    feat_type = "ddpn"
-    data = []
-    for s in splits:
-        dataset_file = f"data/processed/{feat_type}/{s}.csv"
-
-        if use_iou:
-            d = MultiModalIoUDataLoader(
-                dataset_file, s, subset_size, feat_type
-            )
-        else:
-            d = MultiModalDataLoader(dataset_file, s, subset_size, feat_type)
-        data.append(d)
-
-    return data
-
-
-def prepare_logging_directory(out_pref: str = "./") -> str:
-    time_stamp = dt.now().strftime("%Y%m%d-%H%M%S")
-    saveto = os.path.join(out_pref, time_stamp)
-    os.makedirs(saveto)
-    return saveto
+# def get_converter(data_name: str, use_iou: bool = False) -> Callable:
+#     if data_name == "multimodal":
+#         if use_iou:
+#             cnv_f = multimodal_iou_converter
+#         else:
+#             cnv_f = multimodal_converter
+#     elif data_name == "phrase-only":
+#         cnv_f = phrase_converter
+#     return cnv_f
 
 
 def train(
-    model: chainer.Chain,
-    train_iterator: chainer.iterators.SerialIterator,
-    val_iterator: chainer.iterators.SerialIterator,
-    epoch: int,
-    device: int,
-    lr: float,
-    w_decay: Optional[float],
-    out_pref: str,
+    cfg: CfgNode,
     checkpoint_on: bool = True,
     my_extensions: Optional[List[Callable]] = None,
-    data_parallel: bool = True,
-    use_iou: bool = False,
-) -> dict:
+) -> Dict[str, Union[str, float]]:
 
-    saveto = prepare_logging_directory(out_pref)
+    model = build_model(cfg)
 
-    # args = locals()
-    # json.dump(args, open(os.path.join(saveto, "args"), "w"))
-
-    device0 = chainer.get_device(device)
-    device0.use()
-
-    opt = chainer.optimizers.Adam(lr)
+    opt = chainer.optimizers.Adam(cfg.TRAIN.LR)
     opt.setup(model)
 
-    if w_decay is not None:
-        opt.add_hook(chainer.optimizer.WeightDecay(w_decay), "hook_dec")
+    if cfg.TRAIN.WEIGHT_DECAY is not None:
+        opt.add_hook(
+            chainer.optimizer.WeightDecay(cfg.TRAIN.WEIGHT_DECAY), "hook_dec"
+        )
 
-    if use_iou:
-        converter = custom_iou_converter
-    else:
-        converter = custom_converter
+    converter = get_converter(
+        data_name=cfg.DATASET.NAME, use_iou=cfg.MODEL.USE_IOU
+    )
 
-    if data_parallel:
+    train_iterators = build_dataloader("train", cfg)
+
+    if len(train_iterators) > 1:
         updater = training.updaters.MultiprocessParallelUpdater(
-            train_iterator,
+            train_iterators,
             opt,
             converter=converter,
-            devices={"main": 0, "second": 1, "third": 2},
+            devices={"main": 0, "second": 1, "third": 2, "fourth": 3},
         )
     else:
+        device0 = chainer.get_device(cfg.TRAIN.DEVICE)
+        device0.use()
         updater = training.StandardUpdater(
-            train_iterator, opt, converter=converter, device=device0
+            train_iterators[0], opt, converter=converter, device=device0
         )
 
-    trainer = training.Trainer(updater, (epoch, "epoch"), saveto)
-
-    if data_parallel:
-        for name, observer in updater._models.items():
-            trainer.reporter.add_observer(name, observer)
+    trainer = training.Trainer(
+        updater, (cfg.TRAIN.EPOCH, "epoch"), cfg.LOG.OUTDIR
+    )
 
     val_interval = (1, "epoch")
     log_interval = (10, "iteration")
 
+    val_iterator = build_dataloader("val", cfg)[0]
+
     trainer.extend(
         extensions.Evaluator(
-            val_iterator, model, converter=converter, device=device
+            val_iterator, model, converter=converter, device=cfg.TRAIN.DEVICE
         ),
         trigger=val_interval,
     )
@@ -185,8 +162,17 @@ def train(
         )
 
     # logging extensions
-    log_report = extensions.LogReport(trigger=log_interval)
+    log_report = extensions.LogReport(
+        trigger=log_interval, filename=cfg.LOG.LOG_FILE
+    )
     trainer.extend(log_report)
+
+    if cfg.LOG.NEPTUNE:
+        trainer.extend(
+            lambda trainer: log2neptune(trainer, cfg.LOG.LOG_FILE),
+            trigger=log_interval,
+        )
+
     trainer.extend(extensions.observe_lr(), trigger=log_interval)
 
     trainer.extend(
@@ -214,7 +200,7 @@ def train(
 
     if checkpoint_on:
         chainer.serializers.save_npz(
-            os.path.join(saveto, "final_model"), model
+            os.path.join(cfg.LOG.OUTDIR, "final_model"), model
         )
 
     best_val = max(
@@ -225,166 +211,96 @@ def train(
         ]
     )
 
-    result_info = {"log_dir": saveto, "best_val": best_val}
+    result_info = {"log_dir": cfg.LOG.OUTDIR, "best_val": best_val}
     return result_info
 
 
-def load_study_log_from_neptune(exp_id: str) -> dict:
-    project = neptune.init(project_qualified_name="mayu-ot/VGP")
-    neptune_exp = project.get_experiments(exp_id)[0]
-    with tempfile.TemporaryDirectory() as d:
-        neptune_exp.download_artifact("study.pkl", destination_dir=d)
-        file_name = os.path.join(d, "study.pkl")
-        study = joblib.load(open(file_name, "rb"))
-    return study.best_params
+# def load_study_log_from_neptune(exp_id: str) -> dict:
+#     project = neptune.init(project_qualified_name="mayu-ot/VGP")
+#     neptune_exp = project.get_experiments(exp_id)[0]
+#     with tempfile.TemporaryDirectory() as d:
+#         neptune_exp.download_artifact("study.pkl", destination_dir=d)
+#         file_name = os.path.join(d, "study.pkl")
+#         study = joblib.load(open(file_name, "rb"))
+#     return study.best_params
 
 
-def train_model_with_study_log(args):
-    exp_id: "str" = args.exp_id
+# def train_model_with_study_log(args):
+#     exp_id: "str" = args.exp_id
 
-    project = neptune.init(project_qualified_name="mayu-ot/VGP")
-    neptune_exp = project.get_experiments(exp_id)[0]
+#     project = neptune.init(project_qualified_name="mayu-ot/VGP")
+#     neptune_exp = project.get_experiments(exp_id)[0]
 
-    params: dict = load_study_log_from_neptune(exp_id)
+#     params: dict = load_study_log_from_neptune(exp_id)
 
-    if params["weight_decay_on"]:
-        weight_decay: Optional[float] = params["weight_decay"]
-    else:
-        weight_decay = None
+#     if params["weight_decay_on"]:
+#         weight_decay: Optional[float] = params["weight_decay"]
+#     else:
+#         weight_decay = None
 
-    exp_name = neptune_exp.name.split("_")
-    gate_mode = "_".join(exp_name[2:])
-    params["gate_mode"] = gate_mode
+#     exp_name = neptune_exp.name.split("_")
+#     gate_mode = "_".join(exp_name[2:])
+#     params["gate_mode"] = gate_mode
 
-    h_size_0 = params["h_size_0"]
-    h_size_1 = params["h_size_1"]
+#     if "h_size_0" in params:
+#         h_size_0 = params["h_size_0"]
+#         h_size_1 = params["h_size_1"]
+#     else:
+#         h_size_0 = 1000
+#         h_size_1 = 300
+#     model = build_model(gate_mode, (h_size_0, h_size_1))
 
-    model = construct_model(gate_mode, (h_size_0, h_size_1))
+#     train_dataset, val_dataset = get_dataset(["train", "val"])
 
-    train_dataset, val_dataset = get_dataset(["train", "val"])
+#     down_sampler = DownSampler(
+#         train_dataset.indices_positive, train_dataset.indices_negative
+#     )
 
-    down_sampler = DownSampler(
-        train_dataset.indices_positive, train_dataset.indices_negative
-    )
+#     b_size: int = 1000
 
-    b_size: int = 1000
+#     train_iterator = SerialIterator(
+#         train_dataset, b_size, shuffle=None, order_sampler=down_sampler
+#     )
 
-    train_iterator = SerialIterator(
-        train_dataset, b_size, shuffle=None, order_sampler=down_sampler
-    )
+#     val_iterator = SerialIterator(val_dataset, 2 * b_size, repeat=False)
 
-    val_iterator = SerialIterator(val_dataset, 2 * b_size, repeat=False)
+#     result_info = train(
+#         model,
+#         train_iterator,
+#         val_iterator,
+#         5,
+#         args.device,
+#         params["lr"],
+#         weight_decay,
+#         out_pref=args.out_pref,
+#         checkpoint_on=True,
+#         data_parallel=False,
+#     )
 
-    result_info = train(
-        model,
-        train_iterator,
-        val_iterator,
-        5,
-        args.device,
-        params["lr"],
-        weight_decay,
-        out_pref=args.out_pref,
-        checkpoint_on=True,
-        data_parallel=False,
-    )
+#     if cfg.LOG.NEPTUNE:
+#         neptune.stop()
 
-    param_file = os.path.join(result_info["log_dir"], "config.json")
-    json.dump(params, open(param_file, "w"))
-
-
-def manual_train(args):
-    train_dataset, val_dataset = get_dataset(
-        ["train", "val"], subset_size=args.train_percent, use_iou=args.use_iou
-    )
-
-    down_sampler = DownSampler(
-        train_dataset.indices_positive, train_dataset.indices_negative
-    )
-
-    train_iterator = MultiprocessIterator(
-        train_dataset, args.b_size, shuffle=None, order_sampler=down_sampler
-    )
-
-    val_iterator = MultiprocessIterator(val_dataset, 2 * args.b_size, repeat=False)
-
-    model = construct_model(args.gate_mode, use_iou=args.use_iou)
-    if args.device is not None:
-        chainer.cuda.get_device_from_id(args.device).use()
-        model.to_gpu()
-
-    train(
-        model,
-        train_iterator,
-        val_iterator,
-        args.epoch,
-        args.device,
-        args.lr,
-        args.w_decay,
-        args.out_pref,
-        use_iou=args.use_iou,
-    )
+#     param_file = os.path.join(result_info["log_dir"], "config.json")
+#     json.dump(params, open(param_file, "w"))
 
 
-def main():
-    import argparse
+@click.command()
+@click.argument("config_file")
+def main(config_file: str):
+    cfg = get_cfg_defaults()
+    cfg.merge_from_file(config_file)
+    cfg.freeze()
 
-    parser = argparse.ArgumentParser(
-        description="training script for a paraphrase classifier"
-    )
-    parser.add_argument(
-        "--device", "-d", type=int, default=None, help="gpu device id <int>"
-    )
-    parser.add_argument(
-        "--epoch", "-e", type=int, default=5, help="maximum epoch <int>"
-    )
-    parser.add_argument(
-        "--san_check", "-sc", action="store_true", help="sanity check mode"
-    )
-    parser.add_argument(
-        "--train_percent",
-        type=float,
-        default=1.0,
-        help="How many date will be used for training",
-    )
-    parser.add_argument("--out_pref", type=str, default="./checkpoint/")
+    if not os.path.exists(cfg.LOG.OUTDIR):
+        os.makedirs(cfg.LOG.OUTDIR)
+        filename = os.path.join(cfg.LOG.OUTDIR, "config.yaml")
+        with open(filename, "w") as f:
+            f.write(cfg.dump())
 
-    subparsers = parser.add_subparsers(help="sub-commands")
+    if cfg.LOG.NEPTUNE:
+        setup_neptune(cfg)
 
-    use_nept_parser = subparsers.add_parser(
-        "neptune_log", help="download study log on neptune"
-    )
-    use_nept_parser.add_argument("exp_id", type=str)
-    use_nept_parser.set_defaults(func=train_model_with_study_log)
-
-    manual_parser = subparsers.add_parser("manual", help="manual settings")
-    manual_parser.add_argument(
-        "gate_mode",
-        choices=["none", "language_gate", "visual_gate", "multimodal_gate"],
-    )
-    manual_parser.add_argument(
-        "--use_iou", action="store_true", help="sanity check mode"
-    )
-    manual_parser.add_argument(
-        "--lr", "-lr", type=float, default=0.01, help="learning rate <float>"
-    )
-    manual_parser.add_argument(
-        "--b_size",
-        "-b",
-        type=int,
-        default=500,
-        help="minibatch size <int> (default 500)",
-    )
-    manual_parser.add_argument(
-        "--w_decay",
-        "-wd",
-        type=float,
-        default=None,
-        help="weight decay <float>",
-    )
-    manual_parser.set_defaults(func=manual_train)
-    args = parser.parse_args()
-
-    args.func(args)
+    train(cfg)
 
 
 if __name__ == "__main__":
