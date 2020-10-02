@@ -1,7 +1,7 @@
 neurocomp_vgp
 ==============================
 
-## Install Dependencies
+## Docker
 
 ```
 git clone https://github.com/ids-cv/neurocomp_vgp.git
@@ -29,7 +29,15 @@ docker run --rm -it --gpus all \
      /bin/bash
 ```
 
+In the docker container, run:
+
 ```
-python src/experiment4/train.py data/configs/multimodal_gate.yaml
+python src/train.py data/configs/multimodal_gate.yaml
 ```
 
+A model with the highest f1 value is saved in 'LOG.OUTDIR' specified by the config file.
+
+## Evaluation
+```
+python src/evaluate.py data/configs/multimodal_gate.yaml
+```

@@ -23,7 +23,7 @@ ENV PATH /opt/conda/bin:$PATH
 ENV CHAINER_BUILD_CHAINERX=1
 ENV CHAINERX_BUILD_CUDA=1
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu/
 
