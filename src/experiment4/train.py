@@ -1,15 +1,11 @@
-import pdb
 from typing import Dict, List, Optional, Callable, Union
 from src.models import build_model
 from src.data_loader import build_dataloader, get_converter
-import numpy as np
 
 import chainer
 from chainer import training
 from chainer.training import extensions
 import os
-import tempfile
-import joblib
 import json
 from config import get_cfg_defaults
 from yacs.config import CfgNode
@@ -43,56 +39,6 @@ def setup_neptune(cfg) -> None:
     )
     filename = os.path.join(cfg.LOG.OUTDIR, "config.yaml")
     neptune.log_artifact(filename, "config.yaml")
-
-
-def multimodal_iou_converter(batch, device=None):
-    phrase_a = [to_device(device, np.asarray(b[0], np.int32)) for b in batch]
-    phrase_b = [to_device(device, np.asarray(b[1], np.int32)) for b in batch]
-
-    visfeat_a = np.vstack([b[2] for b in batch])
-    visfeat_a = to_device(device, visfeat_a)
-    visfeat_b = np.vstack([b[3] for b in batch])
-    visfeat_b = to_device(device, visfeat_b)
-
-    ious = np.asarray([b[4] for b in batch], np.float32)[:, None]
-    ious = to_device(device, ious)
-
-    label = np.asarray([b[5] for b in batch], np.int32)
-    label = to_device(device, label)
-    return phrase_a, phrase_b, visfeat_a, visfeat_b, ious, label
-
-
-def multimodal_converter(batch, device=None):
-    phrase_a = [to_device(device, np.asarray(b[0], np.int32)) for b in batch]
-    phrase_b = [to_device(device, np.asarray(b[1], np.int32)) for b in batch]
-
-    visfeat_a = np.vstack([b[2] for b in batch])
-    visfeat_a = to_device(device, visfeat_a)
-    visfeat_b = np.vstack([b[3] for b in batch])
-    visfeat_b = to_device(device, visfeat_b)
-
-    label = np.asarray([b[4] for b in batch], np.int32)
-    label = to_device(device, label)
-    return phrase_a, phrase_b, visfeat_a, visfeat_b, label
-
-
-def phrase_converter(batch, device):
-    phrase_a = [to_device(device, np.asarray(b[0], np.int32)) for b in batch]
-    phrase_b = [to_device(device, np.asarray(b[1], np.int32)) for b in batch]
-    label = np.asarray([b[2] for b in batch], np.int32)
-    label = to_device(device, label)
-    return phrase_a, phrase_b, label
-
-
-# def get_converter(data_name: str, use_iou: bool = False) -> Callable:
-#     if data_name == "multimodal":
-#         if use_iou:
-#             cnv_f = multimodal_iou_converter
-#         else:
-#             cnv_f = multimodal_converter
-#     elif data_name == "phrase-only":
-#         cnv_f = phrase_converter
-#     return cnv_f
 
 
 def train(
@@ -157,8 +103,7 @@ def train(
         )
 
         trainer.extend(
-            extensions.snapshot_object(model, "model"),
-            trigger=best_val_trigger,
+            extensions.snapshot_object(model, "model"), trigger=best_val_trigger
         )
 
     # logging extensions
@@ -213,75 +158,6 @@ def train(
 
     result_info = {"log_dir": cfg.LOG.OUTDIR, "best_val": best_val}
     return result_info
-
-
-# def load_study_log_from_neptune(exp_id: str) -> dict:
-#     project = neptune.init(project_qualified_name="mayu-ot/VGP")
-#     neptune_exp = project.get_experiments(exp_id)[0]
-#     with tempfile.TemporaryDirectory() as d:
-#         neptune_exp.download_artifact("study.pkl", destination_dir=d)
-#         file_name = os.path.join(d, "study.pkl")
-#         study = joblib.load(open(file_name, "rb"))
-#     return study.best_params
-
-
-# def train_model_with_study_log(args):
-#     exp_id: "str" = args.exp_id
-
-#     project = neptune.init(project_qualified_name="mayu-ot/VGP")
-#     neptune_exp = project.get_experiments(exp_id)[0]
-
-#     params: dict = load_study_log_from_neptune(exp_id)
-
-#     if params["weight_decay_on"]:
-#         weight_decay: Optional[float] = params["weight_decay"]
-#     else:
-#         weight_decay = None
-
-#     exp_name = neptune_exp.name.split("_")
-#     gate_mode = "_".join(exp_name[2:])
-#     params["gate_mode"] = gate_mode
-
-#     if "h_size_0" in params:
-#         h_size_0 = params["h_size_0"]
-#         h_size_1 = params["h_size_1"]
-#     else:
-#         h_size_0 = 1000
-#         h_size_1 = 300
-#     model = build_model(gate_mode, (h_size_0, h_size_1))
-
-#     train_dataset, val_dataset = get_dataset(["train", "val"])
-
-#     down_sampler = DownSampler(
-#         train_dataset.indices_positive, train_dataset.indices_negative
-#     )
-
-#     b_size: int = 1000
-
-#     train_iterator = SerialIterator(
-#         train_dataset, b_size, shuffle=None, order_sampler=down_sampler
-#     )
-
-#     val_iterator = SerialIterator(val_dataset, 2 * b_size, repeat=False)
-
-#     result_info = train(
-#         model,
-#         train_iterator,
-#         val_iterator,
-#         5,
-#         args.device,
-#         params["lr"],
-#         weight_decay,
-#         out_pref=args.out_pref,
-#         checkpoint_on=True,
-#         data_parallel=False,
-#     )
-
-#     if cfg.LOG.NEPTUNE:
-#         neptune.stop()
-
-#     param_file = os.path.join(result_info["log_dir"], "config.json")
-#     json.dump(params, open(param_file, "w"))
 
 
 @click.command()

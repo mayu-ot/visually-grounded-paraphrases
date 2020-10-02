@@ -161,6 +161,28 @@ class IoUDataLoader(AbstractDataLoader):
 
 
 @dataclass
+class PhraseOnlyDataLoader(AbstractDataLoader):
+    def __post_init__(self) -> None:
+        pairs: pd.DataFrame = self.load_dataset_file(self.dataset_file)
+        self.image = pairs["image"].tolist()
+        self.label = pairs["label"].tolist()
+
+        self.phrase_dataloader = PhraseDataLoader(
+            self.dataset_file, self.split, self.subset_size
+        )
+
+    def __len__(self) -> int:
+        return len(self.label)
+
+    def get_example(
+        self, i
+    ) -> Tuple[List[int], List[int], np.ndarray, np.ndarray, bool]:
+        phr_a, phr_b = self.phrase_dataloader[i]
+        label = self.label[i]
+        return phr_a, phr_b, label
+
+
+@dataclass
 class MultiModalDataLoader(AbstractDataLoader):
     feat_type: str
 

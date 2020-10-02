@@ -1,93 +1,35 @@
 neurocomp_vgp
 ==============================
 
-A short description of the project.
-
-Project Organization
-------------
-
-    ├── LICENSE
-    ├── Makefile           <- Makefile with commands like `make data` or `make train`
-    ├── README.md          <- The top-level README for developers using this project.
-    ├── data
-    │   ├── external       <- Data from third party sources.
-    │   ├── interim        <- Intermediate data that has been transformed.
-    │   ├── processed      <- The final, canonical data sets for modeling.
-    │   └── raw            <- The original, immutable data dump.
-    │
-    ├── docs               <- A default Sphinx project; see sphinx-doc.org for details
-    │
-    ├── models             <- Trained and serialized models, model predictions, or model summaries
-    │
-    ├── notebooks          <- Jupyter notebooks. Naming convention is a number (for ordering),
-    │                         the creator's initials, and a short `-` delimited description, e.g.
-    │                         `1.0-jqp-initial-data-exploration`.
-    │
-    ├── references         <- Data dictionaries, manuals, and all other explanatory materials.
-    │
-    ├── reports            <- Generated analysis as HTML, PDF, LaTeX, etc.
-    │   └── figures        <- Generated graphics and figures to be used in reporting
-    │
-    ├── requirements.txt   <- The requirements file for reproducing the analysis environment, e.g.
-    │                         generated with `pip freeze > requirements.txt`
-    │
-    ├── setup.py           <- makes project pip installable (pip install -e .) so src can be imported
-    ├── src                <- Source code for use in this project.
-    │   ├── __init__.py    <- Makes src a Python module
-    │   │
-    │   ├── data           <- Scripts to download or generate data
-    │   │   └── make_dataset.py
-    │   │
-    │   ├── features       <- Scripts to turn raw data into features for modeling
-    │   │   └── build_features.py
-    │   │
-    │   ├── models         <- Scripts to train models and then use trained models to make
-    │   │   │                 predictions
-    │   │   ├── predict_model.py
-    │   │   └── train_model.py
-    │   │
-    │   └── visualization  <- Scripts to create exploratory and results oriented visualizations
-    │       └── visualize.py
-    │
-    └── tox.ini            <- tox file with settings for running tox; see tox.testrun.org
-
-# Setting up environment
-
-0. Create conda environment (optional but recommended)
+## Install Dependencies
 
 ```
-$ make create_environment
-$ conda activate neurocomp_vgp
+git clone https://github.com/ids-cv/neurocomp_vgp.git
+cd neurocomp_vgp
+docker build -t image_name_here .
 ```
 
-1. CUDA and CUDNN
-
-Install cudnn. `cudnnenv` recommended.
-
+## Data Preparation
 ```
-$ pip install cudnnenv
-$ cudnnenv install VERSION
-```
-
-1. Set paths
-
-For example,
-
-
-```
-export CFLAGS=-I/home/mayu-ot/.cudnn/active/cuda/include
-export CPATH=/home/mayu-ot/.cudnn/active/cuda/include:$CPATH
-export LDFLAGS=-L/home/mayu-ot/.cudnn/active/cuda/lib64
-export LD_LIBRARY_PATH=/home/mayu-ot/.cudnn/active/cuda/lib64:$LD_LIBRARY_PATH
-export CUDA_PATH=/path/to/cuda
+wget https://visually-grounded-paraphrases.s3-ap-northeast-1.amazonaws.com/data/dictionary.txt -P data/processed/
+wget https://visually-grounded-paraphrases.s3-ap-northeast-1.amazonaws.com/data/ddpn_data.zip -P data/processed/ddpn/
+cd data/processed/ddpn/
+unzip ddpn_data.zip
 ```
 
-2. Install dependencies
+## Training
+
+First, run container:
 
 ```
-make requirements
+docker run --rm -it --gpus all \
+    -e LOCAL_UID=$(id -u $USER) \
+    -e LOCAL_GID=$(id -g $USER) \
+    -v /local/path/to/neurocomp_vgp:/app \
+     /bin/bash
 ```
 
---------
+```
+python src/experiment4/train.py data/configs/multimodal_gate.yaml
+```
 
-<p><small>Project based on the <a target="_blank" href="https://drivendata.github.io/cookiecutter-data-science/">cookiecutter data science project template</a>. #cookiecutterdatascience</small></p>

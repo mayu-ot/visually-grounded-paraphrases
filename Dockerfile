@@ -3,13 +3,13 @@ FROM nvidia/cuda:10.1-cudnn7-devel-ubuntu16.04
 ARG PYTHON_VERSION=3.7
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-         build-essential \
-         cmake \
-         git \
-         curl \
-         ca-certificates \
-         libjpeg-dev \
-         libpng-dev && \
+     build-essential \
+     cmake \
+     git \
+     curl \
+     ca-certificates \
+     libjpeg-dev \
+     libpng-dev && \
      rm -rf /var/lib/apt/lists/*
 
 
@@ -32,3 +32,9 @@ RUN apt-get update && apt-get -y install gosu
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
+# Create a working directory
+RUN mkdir /app
+WORKDIR /app
+
+ENV PYTHONPATH=/app
