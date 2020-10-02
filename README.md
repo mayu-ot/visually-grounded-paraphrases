@@ -1,7 +1,7 @@
 neurocomp_vgp
 ==============================
 
-## Install Dependencies
+## Docker
 
 ```
 git clone https://github.com/ids-cv/neurocomp_vgp.git
