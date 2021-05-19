@@ -11,8 +11,8 @@ docker build -t image_name_here .
 
 ## Data Preparation
 ```
-wget https://visually-grounded-paraphrases.s3-ap-northeast-1.amazonaws.com/data/dictionary.txt -P data/processed/
-wget https://visually-grounded-paraphrases.s3-ap-northeast-1.amazonaws.com/data/ddpn_data.zip -P data/processed/ddpn/
+wget https://visually-grounded-paraphrases.s3-ap-northeast-1.amazonaws.com/dictionary.txt -P data/processed/
+wget https://visually-grounded-paraphrases.s3-ap-northeast-1.amazonaws.com/ddpn_data.zip -P data/processed/ddpn/
 cd data/processed/ddpn/
 unzip ddpn_data.zip
 ```
